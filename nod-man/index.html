@@ -1,0 +1,2895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nod-Man - Head-Controlled Pac-Man</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- TensorFlow.js and MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.1/dist/face-landmarks-detection.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+        #webcam-container {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 160px;
+            height: 120px;
+            border: 2px solid #facc15;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            z-index: 100;
+        }
+        #video, #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        #game-canvas {
+            display: block;
+        }
+        /* Direction indicator */
+        .direction-indicator {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 5px;
+            z-index: 100;
+        }
+        .dir-arrow {
+            width: 30px;
+            height: 30px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 18px;
+            transition: all 0.1s;
+        }
+        .dir-arrow.active {
+            background: #facc15;
+            color: #000;
+        }
+        /* Score display */
+        .score-display {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 10px;
+            z-index: 100;
+        }
+        /* Status */
+        #status {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            padding: 8px 16px;
+            border-radius: 8px;
+            z-index: 100;
+        }
+        /* Landscape prompt */
+        .landscape-prompt {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #1a1a2e;
+            z-index: 9999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 2rem;
+        }
+        .landscape-prompt .rotate-icon {
+            font-size: 4rem;
+            animation: rotate-hint 2s ease-in-out infinite;
+        }
+        @keyframes rotate-hint {
+            0%, 100% { transform: rotate(0deg); }
+            50% { transform: rotate(90deg); }
+        }
+        @media (max-width: 850px) and (orientation: portrait) {
+            .landscape-prompt {
+                display: flex;
+            }
+        }
+        /* Mobile landscape */
+        @media (max-height: 500px) and (orientation: landscape) {
+            #webcam-container {
+                width: 100px !important;
+                height: 75px !important;
+            }
+            .score-display {
+                padding: 5px 10px;
+                font-size: 0.8rem;
+            }
+            #status {
+                font-size: 0.7rem;
+                padding: 4px 8px;
+            }
+            .dir-arrow {
+                width: 24px;
+                height: 24px;
+                font-size: 14px;
+            }
+        }
+        /* Share button */
+        .share-btn {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white"><style id="project-nav-style">.project-nav{font-family:"SF Mono","Monaco","Menlo",monospace;background:#1a1a2e;padding:0.5rem 1rem;font-size:0.9rem;}.project-nav a{color:#00d9ff;text-decoration:none;}.project-nav a:hover{text-decoration:underline;}.project-nav .sep{color:#666;}</style><nav class="project-nav"><a href="../index.html">~/projects</a><span class="sep">/</span><span>nod-man</span></nav>
+    <!-- Landscape prompt -->
+    <div class="landscape-prompt">
+        <div class="rotate-icon">📱</div>
+        <h2 class="text-2xl font-bold text-yellow-400 mt-4 mb-2">Rotate Your Device</h2>
+        <p class="text-gray-300 max-w-xs">Please rotate to landscape mode for the best experience!</p>
+        <p class="text-gray-500 text-sm mt-4">🟡 Nod-Man needs room to roam!</p>
+    </div>
+
+    <!-- Game Canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Direction Indicator -->
+    <div class="direction-indicator">
+        <div id="dir-up" class="dir-arrow">↑</div>
+        <div id="dir-left" class="dir-arrow">←</div>
+        <div id="dir-down" class="dir-arrow">↓</div>
+        <div id="dir-right" class="dir-arrow">→</div>
+    </div>
+
+    <!-- Score Display -->
+    <div class="score-display">
+        <div class="text-gray-400 text-xs">SCORE</div>
+        <div id="score" class="text-2xl font-bold text-yellow-400">0</div>
+    </div>
+
+    <!-- Webcam -->
+    <div id="webcam-container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="overlay"></canvas>
+    </div>
+
+    <!-- Status -->
+    <div id="status" class="text-sm text-gray-300">Loading face detection...</div>
+
+    <!-- Share Button -->
+    <button id="btn-share" class="share-btn px-4 py-2 bg-black hover:bg-gray-900 rounded-lg text-sm font-medium transition flex items-center gap-1 border border-gray-700">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        Share
+    </button>
+
+    <script>
+        // ============================================
+        // FACE DETECTION
+        // ============================================
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const overlayCtx = overlay.getContext('2d');
+        const statusElement = document.getElementById('status');
+
+        let detector;
+
+        // Head direction tracking
+        let headDirection = { x: 0, y: 0 }; // -1, 0, or 1 for each axis
+        const THRESHOLD = 12; // Sensitivity for head tilt detection
+
+        // Blink detection for shooting
+        const EAR_THRESHOLD = 0.22;
+        const LEFT_EYE_INDICES = [362, 385, 387, 263, 373, 380];
+        const RIGHT_EYE_INDICES = [33, 160, 158, 133, 144, 145];
+        let isBlinking = false;
+        let blinkTriggered = false;
+
+        function distance(p1, p2) {
+            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+        }
+
+        function calculateEAR(keypoints, indices) {
+            const p1 = keypoints[indices[0]];
+            const p2 = keypoints[indices[1]];
+            const p3 = keypoints[indices[2]];
+            const p4 = keypoints[indices[3]];
+            const p5 = keypoints[indices[4]];
+            const p6 = keypoints[indices[5]];
+            const A = distance(p2, p6);
+            const B = distance(p3, p5);
+            const C = distance(p1, p4);
+            return (A + B) / (2.0 * C);
+        }
+
+        // Direction indicators
+        const dirUp = document.getElementById('dir-up');
+        const dirDown = document.getElementById('dir-down');
+        const dirLeft = document.getElementById('dir-left');
+        const dirRight = document.getElementById('dir-right');
+
+        const MODEL_URL = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
+        const DETECTOR_CONFIG = {
+            runtime: 'mediapipe',
+            solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh',
+            maxFaces: 1,
+            refineLandmarks: true
+        };
+
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: { facingMode: 'user', width: 320, height: 240 }
+                });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        overlay.width = video.videoWidth;
+                        overlay.height = video.videoHeight;
+                        video.play();
+                        resolve(video);
+                    };
+                });
+            } catch (error) {
+                statusElement.textContent = `Camera error: ${error.message}`;
+                return null;
+            }
+        }
+
+        async function loadModel(retryCount = 0) {
+            statusElement.textContent = `Loading model (${retryCount + 1}/5)...`;
+            try {
+                detector = await faceLandmarksDetection.createDetector(MODEL_URL, DETECTOR_CONFIG);
+                statusElement.textContent = "Ready! Tilt your head to move Nod-Man!";
+                return true;
+            } catch (error) {
+                if (retryCount < 4) {
+                    await new Promise(r => setTimeout(r, 1000 * Math.pow(2, retryCount)));
+                    return loadModel(retryCount + 1);
+                }
+                statusElement.textContent = "Model failed to load.";
+                return false;
+            }
+        }
+
+        async function detectFace() {
+            if (!detector || video.readyState !== 4) {
+                requestAnimationFrame(detectFace);
+                return;
+            }
+
+            const faces = await detector.estimateFaces(video, { flipHorizontal: false });
+
+            overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+            overlayCtx.save();
+            overlayCtx.scale(-1, 1);
+            overlayCtx.translate(-overlay.width, 0);
+            overlayCtx.drawImage(video, 0, 0);
+            overlayCtx.restore();
+
+            // Reset direction indicators
+            dirUp.classList.remove('active');
+            dirDown.classList.remove('active');
+            dirLeft.classList.remove('active');
+            dirRight.classList.remove('active');
+
+            if (faces && faces.length > 0) {
+                const keypoints = faces[0].keypoints;
+
+                // Get nose tip (landmark 1)
+                const nose = keypoints[1];
+
+                // Get face center using cheeks (234 = left cheek, 454 = right cheek)
+                const leftCheek = keypoints[234];
+                const rightCheek = keypoints[454];
+                const faceCenterX = (leftCheek.x + rightCheek.x) / 2;
+
+                // Get vertical center using forehead and chin (10 = forehead, 152 = chin)
+                const forehead = keypoints[10];
+                const chin = keypoints[152];
+                const faceCenterY = (forehead.y + chin.y) / 2;
+
+                // Calculate offset from center
+                const offsetX = nose.x - faceCenterX;
+                const offsetY = nose.y - faceCenterY;
+
+                // Determine direction with deadzone
+                // Note: Camera is mirrored, so we invert X
+                headDirection.x = 0;
+                headDirection.y = 0;
+
+                if (offsetX < -THRESHOLD) {
+                    headDirection.x = 1; // Head tilted left (appears right in mirrored view)
+                    dirRight.classList.add('active');
+                } else if (offsetX > THRESHOLD) {
+                    headDirection.x = -1; // Head tilted right (appears left in mirrored view)
+                    dirLeft.classList.add('active');
+                }
+
+                if (offsetY < -THRESHOLD) {
+                    headDirection.y = -1; // Head tilted up
+                    dirUp.classList.add('active');
+                } else if (offsetY > THRESHOLD) {
+                    headDirection.y = 1; // Head tilted down
+                    dirDown.classList.add('active');
+                }
+
+                // Draw nose point
+                overlayCtx.fillStyle = '#facc15';
+                overlayCtx.beginPath();
+                overlayCtx.arc(nose.x, nose.y, 5, 0, 2 * Math.PI);
+                overlayCtx.fill();
+
+                // Blink detection for shooting
+                const leftEar = calculateEAR(keypoints, LEFT_EYE_INDICES);
+                const rightEar = calculateEAR(keypoints, RIGHT_EYE_INDICES);
+                const avgEar = (leftEar + rightEar) / 2;
+
+                if (avgEar < EAR_THRESHOLD) {
+                    if (!isBlinking) {
+                        blinkTriggered = true; // Signal to game to shoot
+                    }
+                    isBlinking = true;
+                } else {
+                    isBlinking = false;
+                }
+            }
+
+            requestAnimationFrame(detectFace);
+        }
+
+        // ============================================
+        // NOD-MAN GAME
+        // ============================================
+        const gameCanvas = document.getElementById('game-canvas');
+        const ctx = gameCanvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+
+        // Canvas sizing
+        function resizeCanvas() {
+            gameCanvas.width = window.innerWidth;
+            gameCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Game constants
+        const DOT_SPACING = 40;
+        const DOT_RADIUS = 4;
+        const NODMAN_BASE_SIZE = 20;
+        const GROWTH_PER_LEVEL = 2; // Grow 2 pixels per 10 dots eaten
+
+        // Calculate current Nod-Man size based on size points and giant mode
+        function getNodmanSize() {
+            const baseSize = Math.min(nodman.sizePoints, MAX_SIZE);
+            return giantMode ? baseSize * GIANT_MULTIPLIER : baseSize;
+        }
+
+        // Calculate how many hits Nod-Man can take before game over
+        function getHitsRemaining() {
+            return Math.floor((nodman.sizePoints - MIN_SIZE) / SIZE_LOSS_PER_HIT);
+        }
+
+        // Check and unlock achievements based on dots eaten
+        // Requirements: must be at MAX_SIZE and in power pellet mode
+        function checkAchievements() {
+            // Only check achievements when at max size AND power pellet is active
+            if (nodman.sizePoints < MAX_SIZE || !powerPelletActive) {
+                return;
+            }
+
+            for (const achievement of ACHIEVEMENTS) {
+                if (!unlockedAchievements.includes(achievement.id) && nodman.dotsEaten >= achievement.dots) {
+                    unlockedAchievements.push(achievement.id);
+                    currentAchievement = achievement;
+                    // Show popup
+                    achievementPopup = {
+                        name: achievement.name,
+                        badge: achievement.badge,
+                        desc: achievement.desc,
+                        timer: 180 // 3 seconds
+                    };
+                }
+            }
+        }
+
+        // Get current achievement (highest unlocked)
+        function getCurrentAchievement() {
+            let highest = null;
+            for (const achievement of ACHIEVEMENTS) {
+                if (unlockedAchievements.includes(achievement.id)) {
+                    highest = achievement;
+                }
+            }
+            return highest;
+        }
+        const NODMAN_SPEED = 4;
+        const CHUNK_SIZE = 15; // 15x15 dots per chunk
+        const BUG_BASE_SIZE = 18;
+        const BUG_SPEED = 2;
+        const MAX_BUGS = 15;
+        const BUG_SPAWN_DISTANCE = 400; // Spawn bugs this far from Nod-Man
+        const BUG_DIRECTION_CHANGE_CHANCE = 0.02; // Chance to change direction each frame
+
+        // Bug types - different bugs with unique characteristics
+        const BUG_TYPES = {
+            // Level 1 bugs (basic)
+            basic: {
+                colors: ['#ef4444', '#f97316', '#84cc16', '#06b6d4'],
+                minLevel: 1,
+                sizeMultiplier: 1,
+                speedMultiplier: 1,
+                damage: 1,
+                style: 'normal'
+            },
+            // Special bugs (can appear at any level)
+            immune: {
+                colors: ['#22c55e', '#c084fc', '#ffffff'], // green, purple, white - immune to crushing
+                minLevel: 1,
+                sizeMultiplier: 1,
+                speedMultiplier: 0.9,
+                damage: 1,
+                style: 'normal'
+            },
+            // Level 2+ bugs - bigger and meaner
+            beetle: {
+                colors: ['#1e3a5f', '#2d4a6f', '#3d5a80'],
+                minLevel: 2,
+                sizeMultiplier: 1.5,
+                speedMultiplier: 0.8,
+                damage: 2,
+                style: 'beetle' // Has shell/armor look
+            },
+            hornet: {
+                colors: ['#fbbf24', '#f59e0b'],
+                minLevel: 2,
+                sizeMultiplier: 1.2,
+                speedMultiplier: 1.5,
+                damage: 2,
+                style: 'hornet' // Has stripes and stinger
+            },
+            spider: {
+                colors: ['#18181b', '#27272a'],
+                minLevel: 2,
+                sizeMultiplier: 1.8,
+                speedMultiplier: 0.6,
+                damage: 2,
+                style: 'spider' // 8 legs, bigger
+            },
+            scorpion: {
+                colors: ['#7c2d12', '#9a3412'],
+                minLevel: 2,
+                sizeMultiplier: 2.0,
+                speedMultiplier: 0.5,
+                damage: 3,
+                style: 'scorpion' // Has tail/stinger
+            }
+        };
+
+        // Get damage based on level
+        function getBugDamage(bug) {
+            return bug.damage || (currentLevel >= 2 ? 2 : 1);
+        }
+
+        // Get bug size based on level and type
+        function getBugSize(bug) {
+            const baseMultiplier = bug.sizeMultiplier || 1;
+            // Level 2+ bugs are 1.5x to 2x bigger
+            const levelMultiplier = currentLevel >= 2 ? (1.5 + Math.random() * 0.5) : 1;
+            return BUG_BASE_SIZE * baseMultiplier * (bug.type === 'basic' || bug.type === 'immune' ? levelMultiplier : 1);
+        }
+
+        // Fruit weapon types with unique projectile styles
+        const FRUIT_TYPES = {
+            cherry: {
+                emoji: '🍒',
+                name: 'Cherry Bomb',
+                color: '#ef4444',
+                projectileStyle: 'bounce', // Bounces and explodes
+                damage: 1,
+                speed: 8,
+                size: 12
+            },
+            grape: {
+                emoji: '🍇',
+                name: 'Grape Shot',
+                color: '#8b5cf6',
+                projectileStyle: 'spread', // Fires multiple small projectiles
+                damage: 1,
+                speed: 10,
+                size: 8
+            },
+            pear: {
+                emoji: '🍐',
+                name: 'Pear Piercer',
+                color: '#84cc16',
+                projectileStyle: 'pierce', // Goes through multiple enemies
+                damage: 1,
+                speed: 12,
+                size: 14
+            },
+            banana: {
+                emoji: '🍌',
+                name: 'Banana Boomerang',
+                color: '#facc15',
+                projectileStyle: 'boomerang', // Curves back
+                damage: 1,
+                speed: 7,
+                size: 16
+            },
+            egg: {
+                emoji: '🥚',
+                name: 'Egg Splatter',
+                color: '#fef3c7',
+                projectileStyle: 'explode', // Explodes on impact with AOE
+                damage: 2,
+                speed: 6,
+                size: 14
+            },
+            avocado: {
+                emoji: '🥑',
+                name: 'Avocado Laser',
+                color: '#65a30d',
+                projectileStyle: 'laser', // Instant beam
+                damage: 3,
+                speed: 20,
+                size: 10
+            }
+        };
+        const FRUIT_KEYS = Object.keys(FRUIT_TYPES);
+
+        // Game state
+        let nodman = {
+            x: 0,
+            y: 0,
+            direction: 0, // Angle in radians for mouth direction
+            mouthOpen: 0, // Animation state
+            sizePoints: 20, // Current size points (starts at base, grows with dots, shrinks with hits)
+            dotsEaten: 0 // Track total dots eaten
+        };
+        const MIN_SIZE = 10; // Game over if size drops below this
+        const MAX_SIZE = 60; // Cap size at 60px
+        const SIZE_LOSS_PER_HIT = 5; // Lose 5 size points per bug hit
+
+        // Achievement/Badge system
+        const ACHIEVEMENTS = [
+            { id: 'wakawaka', name: 'Waka Waka', desc: 'Eat 100 dots', dots: 100, color: '#facc15', eyeColor: null, glow: null, badge: '🌟' },
+            { id: 'hungry', name: 'Hungry Boy', desc: 'Eat 500 dots', dots: 500, color: '#fb923c', eyeColor: '#1e3a8a', glow: null, badge: '⭐' },
+            { id: 'chomper', name: 'The Chomper', desc: 'Eat 1000 dots', dots: 1000, color: '#f97316', eyeColor: '#7c3aed', glow: '#f97316', badge: '🏅' },
+            { id: 'pelletking', name: 'Pellet King', desc: 'Eat 2500 dots', dots: 2500, color: '#ef4444', eyeColor: '#22c55e', glow: '#ef4444', badge: '👑' },
+            { id: 'ghostbuster', name: 'Ghost Buster', desc: 'Eat 5000 dots', dots: 5000, color: '#ec4899', eyeColor: '#facc15', glow: '#ec4899', badge: '👻' },
+            { id: 'arcademaster', name: 'Arcade Master', desc: 'Eat 10000 dots', dots: 10000, color: '#8b5cf6', eyeColor: '#f0abfc', glow: '#a855f7', badge: '🕹️' },
+            { id: 'pacgod', name: 'PAC-GOD', desc: 'Eat 25000 dots', dots: 25000, color: '#ffd700', eyeColor: '#ff0000', glow: '#ffd700', badge: '🏆', golden: true },
+            { id: 'legend', name: 'Nod-Man Legend', desc: 'Eat 50000 dots', dots: 50000, color: '#00ffff', eyeColor: '#ff00ff', glow: '#00ffff', badge: '💎', rainbow: true }
+        ];
+        let unlockedAchievements = [];
+        let currentAchievement = null;
+        let achievementPopup = null; // { name, badge, timer }
+        let camera = { x: 0, y: 0 };
+        let score = 0;
+        let chunks = new Map(); // Store chunks by "x,y" key
+        let bugs = [];
+        let gameOver = false;
+        let bugSpawnTimer = 0;
+
+        // Weapon system
+        let currentWeapon = null; // null means no weapon
+        let projectiles = [];
+        let fruitPickups = [];
+        let fruitSpawnTimer = 0;
+        let killCount = 0;
+
+        // Elixir super grow system (was immunity, now makes you grow when eating dots)
+        let elixirPickups = [];
+        let elixirSpawnTimer = 0;
+        let elixirGrowActive = false;
+        let elixirGrowTimer = 0;
+        const ELIXIR_GROW_DURATION = 600; // 10 seconds at 60fps
+
+        // Balloon giant mode system
+        let balloonPickups = [];
+        let balloonSpawnTimer = 0;
+        let giantMode = false;
+        let giantTimer = 0;
+        const GIANT_DURATION = 600; // 10 seconds at 60fps
+        const GIANT_MULTIPLIER = 1.1; // 10% size increase
+
+        // Heart extra life system
+        let heartPickups = [];
+        let heartSpawnTimer = 0;
+        let lives = 0;
+        const MAX_LIVES = 3;
+
+        // Power pellet system (white dot - makes bugs vulnerable/edible)
+        let powerPellets = [];
+        let powerPelletSpawnTimer = 0;
+        let powerPelletActive = false;
+        let powerPelletTimer = 0;
+        const POWER_PELLET_DURATION = 600; // 10 seconds at 60fps
+        const POWER_PELLET_SPAWN_MIN = 1200; // 20 seconds minimum
+        const POWER_PELLET_SPAWN_MAX = 1800; // 30 seconds maximum
+        let nextPowerPelletSpawn = POWER_PELLET_SPAWN_MIN + Math.random() * (POWER_PELLET_SPAWN_MAX - POWER_PELLET_SPAWN_MIN);
+
+        // Bug spray repellent system
+        let sprayPickups = [];
+        let spraySpawnTimer = 0;
+        let sprayActive = false;
+        let sprayTimer = 0;
+        const SPRAY_DURATION = 1200; // 20 seconds at 60fps
+        const SPRAY_REPEL_RADIUS = 200; // Bugs stay this far away
+        const SPRAY_SPAWN_MIN = 900; // 15 seconds minimum
+        const SPRAY_SPAWN_MAX = 1500; // 25 seconds maximum
+        let nextSpraySpawn = SPRAY_SPAWN_MIN + Math.random() * (SPRAY_SPAWN_MAX - SPRAY_SPAWN_MIN);
+
+        // Minimum dots eaten to unlock power-ups
+        const MIN_DOTS_FOR_HEART = 20;
+        const MIN_DOTS_FOR_SPRAY = 30;
+        const MIN_DOTS_FOR_POWER_PELLET = 40;
+        const MIN_DOTS_FOR_ELIXIR = 50;
+        const MIN_DOTS_FOR_BALLOON = 60;
+        const MIN_DOTS_FOR_FRUIT = 10;
+
+        // Head movement tracking for leveling
+        let headMovements = { left: 0, right: 0, up: 0, down: 0 };
+        let lastHeadDirection = { x: 0, y: 0 };
+        let currentLevel = 1;
+        const MOVEMENTS_TO_LEVEL_UP = 50;
+
+        // Generate a chunk of dots (with occasional power pellets)
+        function generateChunk(chunkX, chunkY) {
+            const key = `${chunkX},${chunkY}`;
+            if (chunks.has(key)) return;
+
+            const dots = [];
+            const startX = chunkX * CHUNK_SIZE * DOT_SPACING;
+            const startY = chunkY * CHUNK_SIZE * DOT_SPACING;
+
+            // Use seeded random for consistent chunk generation
+            const seed = chunkX * 1000 + chunkY;
+            const seededRandom = () => {
+                const x = Math.sin(seed + dots.length) * 10000;
+                return x - Math.floor(x);
+            };
+
+            for (let x = 0; x < CHUNK_SIZE; x++) {
+                for (let y = 0; y < CHUNK_SIZE; y++) {
+                    // ~2% chance for a power pellet (white dot)
+                    const isPowerPellet = seededRandom() < 0.02;
+                    dots.push({
+                        x: startX + x * DOT_SPACING,
+                        y: startY + y * DOT_SPACING,
+                        eaten: false,
+                        isPowerPellet: isPowerPellet
+                    });
+                }
+            }
+
+            chunks.set(key, { dots, lastAccess: Date.now() });
+        }
+
+        // Get chunks around a position
+        function getChunksAround(worldX, worldY, radius) {
+            const chunkX = Math.floor(worldX / (CHUNK_SIZE * DOT_SPACING));
+            const chunkY = Math.floor(worldY / (CHUNK_SIZE * DOT_SPACING));
+
+            for (let dx = -radius; dx <= radius; dx++) {
+                for (let dy = -radius; dy <= radius; dy++) {
+                    generateChunk(chunkX + dx, chunkY + dy);
+                }
+            }
+        }
+
+        // Clean up far away chunks
+        function cleanupChunks() {
+            const now = Date.now();
+            const chunkX = Math.floor(nodman.x / (CHUNK_SIZE * DOT_SPACING));
+            const chunkY = Math.floor(nodman.y / (CHUNK_SIZE * DOT_SPACING));
+
+            for (const [key, chunk] of chunks) {
+                const [cx, cy] = key.split(',').map(Number);
+                const dist = Math.max(Math.abs(cx - chunkX), Math.abs(cy - chunkY));
+                if (dist > 4) {
+                    chunks.delete(key);
+                }
+            }
+        }
+
+        // ============================================
+        // BUGS (ENEMIES)
+        // ============================================
+        function spawnBug() {
+            if (bugs.length >= MAX_BUGS) return;
+
+            // Spawn at random angle around Nod-Man
+            const angle = Math.random() * Math.PI * 2;
+            const distance = BUG_SPAWN_DISTANCE + Math.random() * 200;
+
+            // Choose bug type based on level
+            let bugTypeKey;
+            const roll = Math.random();
+
+            if (currentLevel >= 2) {
+                // Level 2+: Mix of all bug types
+                if (roll < 0.15) {
+                    bugTypeKey = 'scorpion'; // 15% - rare, dangerous
+                } else if (roll < 0.30) {
+                    bugTypeKey = 'spider'; // 15% - big and slow
+                } else if (roll < 0.50) {
+                    bugTypeKey = 'hornet'; // 20% - fast
+                } else if (roll < 0.65) {
+                    bugTypeKey = 'beetle'; // 15% - armored
+                } else if (roll < 0.80) {
+                    bugTypeKey = 'immune'; // 15% - immune to crushing
+                } else {
+                    bugTypeKey = 'basic'; // 20% - basic bugs
+                }
+            } else {
+                // Level 1: Only basic and immune bugs
+                if (roll < 0.25) {
+                    bugTypeKey = 'immune';
+                } else {
+                    bugTypeKey = 'basic';
+                }
+            }
+
+            const bugType = BUG_TYPES[bugTypeKey];
+            const color = bugType.colors[Math.floor(Math.random() * bugType.colors.length)];
+
+            // Calculate size with level scaling
+            let size = BUG_BASE_SIZE * bugType.sizeMultiplier;
+            if (currentLevel >= 2 && (bugTypeKey === 'basic' || bugTypeKey === 'immune')) {
+                // Basic/immune bugs get 1.5x-2x bigger at level 2+
+                size *= 1.5 + Math.random() * 0.5;
+            }
+
+            const bug = {
+                x: nodman.x + Math.cos(angle) * distance,
+                y: nodman.y + Math.sin(angle) * distance,
+                direction: Math.random() * Math.PI * 2,
+                speed: (BUG_SPEED + Math.random() * 1.5) * bugType.speedMultiplier,
+                color: color,
+                type: bugTypeKey,
+                style: bugType.style,
+                damage: bugType.damage,
+                size: size,
+                sizeMultiplier: bugType.sizeMultiplier,
+                legPhase: Math.random() * Math.PI * 2
+            };
+
+            bugs.push(bug);
+        }
+
+        function updateBugs() {
+            // Spawn new bugs periodically with debounce
+            // Spawn rate depends on how many bugs already exist
+            bugSpawnTimer++;
+            const minBugsDelay = 300; // 5 seconds minimum between spawns
+            const maxBugsDelay = 600; // 10 seconds when near max bugs
+            const spawnDelay = minBugsDelay + (bugs.length / MAX_BUGS) * (maxBugsDelay - minBugsDelay);
+
+            if (bugSpawnTimer > spawnDelay && bugs.length < MAX_BUGS) {
+                spawnBug();
+                bugSpawnTimer = 0;
+            }
+
+            // Update each bug
+            for (const bug of bugs) {
+                // Calculate direction towards Nod-Man
+                const dx = nodman.x - bug.x;
+                const dy = nodman.y - bug.y;
+                const distToPlayer = Math.sqrt(dx * dx + dy * dy);
+
+                // Check if spray is active and bug is within repel radius
+                if (sprayActive && distToPlayer < SPRAY_REPEL_RADIUS) {
+                    // Flee away from Nod-Man!
+                    const fleeDirection = Math.atan2(-dy, -dx);
+                    bug.direction = fleeDirection;
+                    // Move faster when fleeing
+                    bug.x += Math.cos(bug.direction) * bug.speed * 2;
+                    bug.y += Math.sin(bug.direction) * bug.speed * 2;
+                } else {
+                    const targetDirection = Math.atan2(dy, dx);
+
+                    // Gradually turn towards Nod-Man (with some randomness)
+                    let angleDiff = targetDirection - bug.direction;
+                    // Normalize angle difference to -PI to PI
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+                    // Turn towards player (0.05 = how aggressively they track)
+                    bug.direction += angleDiff * 0.05;
+
+                    // Add slight random wobble
+                    if (Math.random() < BUG_DIRECTION_CHANGE_CHANCE) {
+                        bug.direction += (Math.random() - 0.5) * 0.5;
+                    }
+
+                    // Move bug
+                    bug.x += Math.cos(bug.direction) * bug.speed;
+                    bug.y += Math.sin(bug.direction) * bug.speed;
+                }
+
+                // Animate legs
+                bug.legPhase += 0.3;
+            }
+
+            // Remove bugs that are too far from Nod-Man
+            bugs = bugs.filter(bug => {
+                const dx = bug.x - nodman.x;
+                const dy = bug.y - nodman.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                return dist < 1000; // Keep bugs within 1000 pixels
+            });
+        }
+
+        function drawBugs() {
+            for (const bug of bugs) {
+                const screenX = bug.x - camera.x;
+                const screenY = bug.y - camera.y;
+                const bugSize = bug.size || BUG_BASE_SIZE;
+
+                // Skip if off screen
+                if (screenX < -bugSize * 2 || screenX > gameCanvas.width + bugSize * 2) continue;
+                if (screenY < -bugSize * 2 || screenY > gameCanvas.height + bugSize * 2) continue;
+
+                // Vulnerable bugs turn blue and flash
+                let bugColor = bug.color;
+                if (bug.vulnerable && powerPelletActive) {
+                    const flash = Math.sin(Date.now() / 100) > 0;
+                    bugColor = flash ? '#3b82f6' : '#1d4ed8';
+                }
+
+                // Draw based on bug style
+                if (bug.style === 'spider') {
+                    drawSpider(screenX, screenY, bugSize, bugColor, bug);
+                } else if (bug.style === 'hornet') {
+                    drawHornet(screenX, screenY, bugSize, bugColor, bug);
+                } else if (bug.style === 'beetle') {
+                    drawBeetle(screenX, screenY, bugSize, bugColor, bug);
+                } else if (bug.style === 'scorpion') {
+                    drawScorpion(screenX, screenY, bugSize, bugColor, bug);
+                } else {
+                    drawNormalBug(screenX, screenY, bugSize, bugColor, bug);
+                }
+            }
+        }
+
+        // Normal bug (basic/immune)
+        function drawNormalBug(screenX, screenY, bugSize, bugColor, bug) {
+            // Draw bug body (oval)
+            ctx.fillStyle = bugColor;
+            ctx.beginPath();
+            ctx.ellipse(screenX, screenY, bugSize, bugSize * 0.7, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw bug legs (6 legs, animated)
+            ctx.strokeStyle = bugColor;
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 3; i++) {
+                const legOffset = Math.sin(bug.legPhase + i * 0.5) * 4;
+                ctx.beginPath();
+                ctx.moveTo(screenX - bugSize * 0.5, screenY + (i - 1) * 8);
+                ctx.lineTo(screenX - bugSize - 5, screenY + (i - 1) * 8 + legOffset);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(screenX + bugSize * 0.5, screenY + (i - 1) * 8);
+                ctx.lineTo(screenX + bugSize + 5, screenY + (i - 1) * 8 - legOffset);
+                ctx.stroke();
+            }
+
+            // Draw eyes
+            const eyeSize = bugSize * 0.22;
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(screenX - bugSize * 0.3, screenY - bugSize * 0.15, eyeSize, 0, Math.PI * 2);
+            ctx.arc(screenX + bugSize * 0.3, screenY - bugSize * 0.15, eyeSize, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(screenX - bugSize * 0.25, screenY - bugSize * 0.15, eyeSize * 0.5, 0, Math.PI * 2);
+            ctx.arc(screenX + bugSize * 0.35, screenY - bugSize * 0.15, eyeSize * 0.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw antennae
+            ctx.strokeStyle = bugColor;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(screenX - bugSize * 0.3, screenY - bugSize * 0.5);
+            ctx.lineTo(screenX - bugSize * 0.5, screenY - bugSize - 5);
+            ctx.moveTo(screenX + bugSize * 0.3, screenY - bugSize * 0.5);
+            ctx.lineTo(screenX + bugSize * 0.5, screenY - bugSize - 5);
+            ctx.stroke();
+        }
+
+        // Spider - 8 legs, round body
+        function drawSpider(screenX, screenY, bugSize, bugColor, bug) {
+            // Round body
+            ctx.fillStyle = bugColor;
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, bugSize * 0.8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Smaller head
+            ctx.beginPath();
+            ctx.arc(screenX, screenY - bugSize * 0.6, bugSize * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 8 legs (4 on each side)
+            ctx.strokeStyle = bugColor;
+            ctx.lineWidth = 3;
+            for (let i = 0; i < 4; i++) {
+                const legOffset = Math.sin(bug.legPhase + i * 0.4) * 6;
+                const angle = (i - 1.5) * 0.4;
+
+                // Left legs - bent
+                ctx.beginPath();
+                ctx.moveTo(screenX - bugSize * 0.5, screenY + (i - 1.5) * bugSize * 0.3);
+                ctx.lineTo(screenX - bugSize * 1.2, screenY - bugSize * 0.3 + (i - 1.5) * bugSize * 0.4 + legOffset);
+                ctx.lineTo(screenX - bugSize * 1.5, screenY + (i - 1.5) * bugSize * 0.5 + legOffset);
+                ctx.stroke();
+
+                // Right legs - bent
+                ctx.beginPath();
+                ctx.moveTo(screenX + bugSize * 0.5, screenY + (i - 1.5) * bugSize * 0.3);
+                ctx.lineTo(screenX + bugSize * 1.2, screenY - bugSize * 0.3 + (i - 1.5) * bugSize * 0.4 - legOffset);
+                ctx.lineTo(screenX + bugSize * 1.5, screenY + (i - 1.5) * bugSize * 0.5 - legOffset);
+                ctx.stroke();
+            }
+
+            // Multiple eyes (spider style)
+            ctx.fillStyle = '#ff0000';
+            for (let i = 0; i < 4; i++) {
+                ctx.beginPath();
+                ctx.arc(screenX - bugSize * 0.15 + (i % 2) * bugSize * 0.3, screenY - bugSize * 0.5 - Math.floor(i / 2) * bugSize * 0.15, bugSize * 0.1, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Hornet - striped, with stinger
+        function drawHornet(screenX, screenY, bugSize, bugColor, bug) {
+            // Body with stripes
+            ctx.fillStyle = bugColor;
+            ctx.beginPath();
+            ctx.ellipse(screenX, screenY, bugSize, bugSize * 0.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Black stripes
+            ctx.fillStyle = '#000';
+            for (let i = 0; i < 3; i++) {
+                ctx.fillRect(screenX - bugSize * 0.3 + i * bugSize * 0.4, screenY - bugSize * 0.4, bugSize * 0.15, bugSize * 0.8);
+            }
+
+            // Head
+            ctx.fillStyle = bugColor;
+            ctx.beginPath();
+            ctx.arc(screenX - bugSize * 0.8, screenY, bugSize * 0.35, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Stinger
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.moveTo(screenX + bugSize, screenY);
+            ctx.lineTo(screenX + bugSize * 1.4, screenY);
+            ctx.lineTo(screenX + bugSize, screenY + bugSize * 0.1);
+            ctx.fill();
+
+            // Wings (animated)
+            const wingFlap = Math.sin(bug.legPhase * 3) * 0.3;
+            ctx.fillStyle = 'rgba(200, 200, 255, 0.5)';
+            ctx.beginPath();
+            ctx.ellipse(screenX - bugSize * 0.2, screenY - bugSize * 0.5 - wingFlap * bugSize, bugSize * 0.6, bugSize * 0.25, -0.3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(screenX + bugSize * 0.2, screenY - bugSize * 0.5 + wingFlap * bugSize, bugSize * 0.6, bugSize * 0.25, 0.3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Eyes
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(screenX - bugSize * 0.9, screenY - bugSize * 0.1, bugSize * 0.12, 0, Math.PI * 2);
+            ctx.arc(screenX - bugSize * 0.9, screenY + bugSize * 0.15, bugSize * 0.12, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Beetle - armored shell
+        function drawBeetle(screenX, screenY, bugSize, bugColor, bug) {
+            // Shell (darker)
+            ctx.fillStyle = bugColor;
+            ctx.beginPath();
+            ctx.ellipse(screenX, screenY, bugSize, bugSize * 0.8, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Shell line down middle
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(screenX, screenY - bugSize * 0.7);
+            ctx.lineTo(screenX, screenY + bugSize * 0.7);
+            ctx.stroke();
+
+            // Shell highlights
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.beginPath();
+            ctx.ellipse(screenX - bugSize * 0.3, screenY - bugSize * 0.2, bugSize * 0.3, bugSize * 0.2, -0.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Head
+            ctx.fillStyle = bugColor;
+            ctx.beginPath();
+            ctx.arc(screenX, screenY - bugSize * 0.9, bugSize * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Mandibles
+            ctx.strokeStyle = bugColor;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(screenX - bugSize * 0.2, screenY - bugSize * 1.1);
+            ctx.lineTo(screenX - bugSize * 0.4, screenY - bugSize * 1.4);
+            ctx.moveTo(screenX + bugSize * 0.2, screenY - bugSize * 1.1);
+            ctx.lineTo(screenX + bugSize * 0.4, screenY - bugSize * 1.4);
+            ctx.stroke();
+
+            // Legs
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 3; i++) {
+                const legOffset = Math.sin(bug.legPhase + i * 0.5) * 4;
+                ctx.beginPath();
+                ctx.moveTo(screenX - bugSize * 0.7, screenY + (i - 1) * bugSize * 0.4);
+                ctx.lineTo(screenX - bugSize * 1.3, screenY + (i - 1) * bugSize * 0.5 + legOffset);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(screenX + bugSize * 0.7, screenY + (i - 1) * bugSize * 0.4);
+                ctx.lineTo(screenX + bugSize * 1.3, screenY + (i - 1) * bugSize * 0.5 - legOffset);
+                ctx.stroke();
+            }
+
+            // Eyes
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(screenX - bugSize * 0.15, screenY - bugSize * 0.9, bugSize * 0.12, 0, Math.PI * 2);
+            ctx.arc(screenX + bugSize * 0.15, screenY - bugSize * 0.9, bugSize * 0.12, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Scorpion - with tail and pincers
+        function drawScorpion(screenX, screenY, bugSize, bugColor, bug) {
+            // Body segments
+            ctx.fillStyle = bugColor;
+            ctx.beginPath();
+            ctx.ellipse(screenX, screenY, bugSize * 0.8, bugSize * 0.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Tail (curved up with stinger)
+            const tailWave = Math.sin(bug.legPhase * 0.5) * 0.2;
+            ctx.strokeStyle = bugColor;
+            ctx.lineWidth = bugSize * 0.3;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(screenX + bugSize * 0.6, screenY);
+            ctx.quadraticCurveTo(
+                screenX + bugSize * 1.5, screenY - bugSize * 0.5 + tailWave * bugSize,
+                screenX + bugSize * 1.2, screenY - bugSize * 1.2 + tailWave * bugSize
+            );
+            ctx.stroke();
+
+            // Stinger
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath();
+            ctx.arc(screenX + bugSize * 1.2, screenY - bugSize * 1.3 + tailWave * bugSize, bugSize * 0.15, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Pincers
+            ctx.strokeStyle = bugColor;
+            ctx.lineWidth = bugSize * 0.2;
+            // Left pincer
+            ctx.beginPath();
+            ctx.moveTo(screenX - bugSize * 0.5, screenY);
+            ctx.lineTo(screenX - bugSize * 1.2, screenY - bugSize * 0.3);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(screenX - bugSize * 1.3, screenY - bugSize * 0.3, bugSize * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            // Right pincer
+            ctx.beginPath();
+            ctx.moveTo(screenX - bugSize * 0.5, screenY + bugSize * 0.2);
+            ctx.lineTo(screenX - bugSize * 1.2, screenY + bugSize * 0.5);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(screenX - bugSize * 1.3, screenY + bugSize * 0.5, bugSize * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Legs (4 pairs)
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 4; i++) {
+                const legOffset = Math.sin(bug.legPhase + i * 0.4) * 4;
+                ctx.beginPath();
+                ctx.moveTo(screenX - bugSize * 0.3 + i * bugSize * 0.25, screenY + bugSize * 0.4);
+                ctx.lineTo(screenX - bugSize * 0.4 + i * bugSize * 0.25, screenY + bugSize * 0.8 + legOffset);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(screenX - bugSize * 0.3 + i * bugSize * 0.25, screenY - bugSize * 0.4);
+                ctx.lineTo(screenX - bugSize * 0.4 + i * bugSize * 0.25, screenY - bugSize * 0.8 - legOffset);
+                ctx.stroke();
+            }
+
+            // Eyes
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(screenX - bugSize * 0.6, screenY - bugSize * 0.1, bugSize * 0.08, 0, Math.PI * 2);
+            ctx.arc(screenX - bugSize * 0.6, screenY + bugSize * 0.1, bugSize * 0.08, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Colors immune to giant mode crushing
+        const IMMUNE_BUG_COLORS = ['#22c55e', '#c084fc', '#ffffff']; // green, purple, white
+
+        function checkBugCollision() {
+            const currentSize = getNodmanSize();
+
+            for (let i = bugs.length - 1; i >= 0; i--) {
+                const bug = bugs[i];
+                const bugSize = bug.size || BUG_BASE_SIZE;
+                const dx = nodman.x - bug.x;
+                const dy = nodman.y - bug.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < currentSize + bugSize * 0.7) {
+                    // Power pellet active - eat vulnerable bugs!
+                    if (powerPelletActive && bug.vulnerable) {
+                        bugs.splice(i, 1);
+                        // More points for bigger/dangerous bugs
+                        const bugPoints = 20 + (bug.damage || 1) * 10;
+                        score += bugPoints;
+                        killCount++;
+                        scoreEl.textContent = score;
+                        continue;
+                    }
+
+                    // Calculate damage (bug's damage value, scaled by level)
+                    const bugDamage = (bug.damage || 1) * SIZE_LOSS_PER_HIT;
+
+                    if (giantMode) {
+                        // Check if bug is immune to crushing (immune type)
+                        if (bug.type === 'immune' || IMMUNE_BUG_COLORS.includes(bug.color)) {
+                            // Immune bug - still hurts you even when giant!
+                            nodman.sizePoints -= bugDamage;
+                            bugs.splice(i, 1);
+                            if (nodman.sizePoints < MIN_SIZE) {
+                                return true; // Game over!
+                            }
+                        } else {
+                            // Crush the bug when giant!
+                            bugs.splice(i, 1);
+                            score += 15 + (bug.damage || 1) * 5;
+                            killCount++;
+                            scoreEl.textContent = score;
+                        }
+                    } else {
+                        // Reduce size on hit based on bug damage
+                        nodman.sizePoints -= bugDamage;
+                        bugs.splice(i, 1); // Remove the bug that hit us
+                        if (nodman.sizePoints < MIN_SIZE) {
+                            return true; // Game over!
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        function resetGame() {
+            nodman.x = 0;
+            nodman.y = 0;
+            nodman.direction = 0;
+            nodman.sizePoints = NODMAN_BASE_SIZE;
+            nodman.dotsEaten = 0;
+            score = 0;
+            scoreEl.textContent = '0';
+            bugs = [];
+            bugSpawnTimer = 0;
+            // Reset achievements
+            unlockedAchievements = [];
+            currentAchievement = null;
+            achievementPopup = null;
+            gameOver = false;
+            chunks.clear();
+            getChunksAround(0, 0, 2);
+            // Reset weapon system
+            currentWeapon = null;
+            projectiles = [];
+            fruitPickups = [];
+            fruitSpawnTimer = 0;
+            killCount = 0;
+            // Reset elixir grow system
+            elixirPickups = [];
+            elixirSpawnTimer = 0;
+            elixirGrowActive = false;
+            elixirGrowTimer = 0;
+            // Reset balloon/giant mode system
+            balloonPickups = [];
+            balloonSpawnTimer = 0;
+            giantMode = false;
+            giantTimer = 0;
+            // Reset heart/lives system
+            heartPickups = [];
+            heartSpawnTimer = 0;
+            lives = 0;
+            // Reset power pellet system
+            powerPellets = [];
+            powerPelletSpawnTimer = 0;
+            powerPelletActive = false;
+            powerPelletTimer = 0;
+            nextPowerPelletSpawn = POWER_PELLET_SPAWN_MIN + Math.random() * (POWER_PELLET_SPAWN_MAX - POWER_PELLET_SPAWN_MIN);
+            // Reset spray system
+            sprayPickups = [];
+            spraySpawnTimer = 0;
+            sprayActive = false;
+            sprayTimer = 0;
+            nextSpraySpawn = SPRAY_SPAWN_MIN + Math.random() * (SPRAY_SPAWN_MAX - SPRAY_SPAWN_MIN);
+            // Reset level/movement tracking system
+            headMovements = { left: 0, right: 0, up: 0, down: 0 };
+            lastHeadDirection = { x: 0, y: 0 };
+            currentLevel = 1;
+            levelUpAnimation = 0;
+        }
+
+        // ============================================
+        // FRUIT WEAPONS SYSTEM
+        // ============================================
+        function spawnFruitPickup() {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 200 + Math.random() * 300;
+            const fruitType = FRUIT_KEYS[Math.floor(Math.random() * FRUIT_KEYS.length)];
+
+            fruitPickups.push({
+                x: nodman.x + Math.cos(angle) * distance,
+                y: nodman.y + Math.sin(angle) * distance,
+                type: fruitType,
+                floatPhase: Math.random() * Math.PI * 2,
+                ammo: 5 + Math.floor(Math.random() * 5) // 5-9 shots
+            });
+        }
+
+        function updateFruitPickups() {
+            fruitSpawnTimer++;
+            // Spawn fruit every ~5 seconds (only after eating enough dots)
+            if (fruitSpawnTimer > 300 && fruitPickups.length < 3 && nodman.dotsEaten >= MIN_DOTS_FOR_FRUIT) {
+                spawnFruitPickup();
+                fruitSpawnTimer = 0;
+            }
+
+            // Animate float
+            for (const fruit of fruitPickups) {
+                fruit.floatPhase += 0.05;
+            }
+
+            // Check pickup collision
+            for (let i = fruitPickups.length - 1; i >= 0; i--) {
+                const fruit = fruitPickups[i];
+                const dx = nodman.x - fruit.x;
+                const dy = nodman.y - fruit.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < getNodmanSize() + 20) {
+                    currentWeapon = {
+                        type: fruit.type,
+                        ammo: fruit.ammo
+                    };
+                    fruitPickups.splice(i, 1);
+                }
+            }
+
+            // Remove far away pickups
+            fruitPickups = fruitPickups.filter(f => {
+                const dx = f.x - nodman.x;
+                const dy = f.y - nodman.y;
+                return Math.sqrt(dx * dx + dy * dy) < 800;
+            });
+        }
+
+        function drawFruitPickups() {
+            for (const fruit of fruitPickups) {
+                const screenX = fruit.x - camera.x;
+                const screenY = fruit.y - camera.y + Math.sin(fruit.floatPhase) * 8;
+
+                if (screenX < -30 || screenX > gameCanvas.width + 30) continue;
+                if (screenY < -30 || screenY > gameCanvas.height + 30) continue;
+
+                // Glow effect
+                ctx.shadowColor = FRUIT_TYPES[fruit.type].color;
+                ctx.shadowBlur = 15;
+
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(FRUIT_TYPES[fruit.type].emoji, screenX, screenY + 10);
+
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function fireWeapon() {
+            if (!currentWeapon || currentWeapon.ammo <= 0) return;
+
+            const weapon = FRUIT_TYPES[currentWeapon.type];
+            const dir = nodman.direction;
+
+            if (weapon.projectileStyle === 'spread') {
+                // Fire 5 projectiles in a spread
+                for (let i = -2; i <= 2; i++) {
+                    const spreadAngle = dir + i * 0.2;
+                    projectiles.push({
+                        x: nodman.x,
+                        y: nodman.y,
+                        vx: Math.cos(spreadAngle) * weapon.speed,
+                        vy: Math.sin(spreadAngle) * weapon.speed,
+                        type: currentWeapon.type,
+                        life: 60,
+                        style: weapon.projectileStyle
+                    });
+                }
+            } else if (weapon.projectileStyle === 'boomerang') {
+                projectiles.push({
+                    x: nodman.x,
+                    y: nodman.y,
+                    vx: Math.cos(dir) * weapon.speed,
+                    vy: Math.sin(dir) * weapon.speed,
+                    type: currentWeapon.type,
+                    life: 120,
+                    style: weapon.projectileStyle,
+                    startX: nodman.x,
+                    startY: nodman.y,
+                    angle: dir,
+                    time: 0
+                });
+            } else if (weapon.projectileStyle === 'laser') {
+                // Instant hit - check all bugs in line
+                const laserLength = 500;
+                for (const bug of bugs) {
+                    const toBugX = bug.x - nodman.x;
+                    const toBugY = bug.y - nodman.y;
+                    const dist = Math.sqrt(toBugX * toBugX + toBugY * toBugY);
+
+                    if (dist < laserLength) {
+                        // Check if bug is in laser direction
+                        const bugAngle = Math.atan2(toBugY, toBugX);
+                        const angleDiff = Math.abs(bugAngle - dir);
+                        if (angleDiff < 0.3 || angleDiff > Math.PI * 2 - 0.3) {
+                            bug.dead = true;
+                            score += 10;
+                            killCount++;
+                        }
+                    }
+                }
+                // Visual laser beam
+                projectiles.push({
+                    x: nodman.x,
+                    y: nodman.y,
+                    vx: Math.cos(dir),
+                    vy: Math.sin(dir),
+                    type: currentWeapon.type,
+                    life: 10,
+                    style: 'laser',
+                    length: laserLength
+                });
+            } else {
+                // Default single projectile
+                projectiles.push({
+                    x: nodman.x,
+                    y: nodman.y,
+                    vx: Math.cos(dir) * weapon.speed,
+                    vy: Math.sin(dir) * weapon.speed,
+                    type: currentWeapon.type,
+                    life: 90,
+                    style: weapon.projectileStyle
+                });
+            }
+
+            currentWeapon.ammo--;
+            if (currentWeapon.ammo <= 0) {
+                currentWeapon = null;
+            }
+        }
+
+        function updateProjectiles() {
+            for (const proj of projectiles) {
+                proj.life--;
+
+                if (proj.style === 'laser') {
+                    // Laser doesn't move, just fades
+                    continue;
+                }
+
+                if (proj.style === 'boomerang') {
+                    proj.time++;
+                    // Curve back after a while
+                    const curve = Math.sin(proj.time * 0.05) * 0.1;
+                    const currentAngle = proj.angle + curve + proj.time * 0.03;
+                    proj.vx = Math.cos(currentAngle) * FRUIT_TYPES[proj.type].speed;
+                    proj.vy = Math.sin(currentAngle) * FRUIT_TYPES[proj.type].speed;
+                }
+
+                if (proj.style === 'bounce') {
+                    // Add slight gravity and bounce off screen edges (relative to camera)
+                    proj.vy += 0.2;
+                    const screenX = proj.x - camera.x;
+                    const screenY = proj.y - camera.y;
+                    if (screenY > gameCanvas.height - 50) {
+                        proj.vy = -Math.abs(proj.vy) * 0.8;
+                        proj.y = camera.y + gameCanvas.height - 50;
+                    }
+                }
+
+                proj.x += proj.vx;
+                proj.y += proj.vy;
+
+                // Check collision with bugs
+                for (const bug of bugs) {
+                    if (bug.dead) continue;
+                    const bugSize = bug.size || BUG_BASE_SIZE;
+                    const dx = proj.x - bug.x;
+                    const dy = proj.y - bug.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < bugSize + FRUIT_TYPES[proj.type].size) {
+                        bug.dead = true;
+                        score += 10;
+                        killCount++;
+                        scoreEl.textContent = score;
+
+                        if (proj.style === 'explode') {
+                            // AOE damage - kill nearby bugs too
+                            for (const otherBug of bugs) {
+                                if (otherBug.dead) continue;
+                                const dx2 = proj.x - otherBug.x;
+                                const dy2 = proj.y - otherBug.y;
+                                const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+                                if (dist2 < 80) {
+                                    otherBug.dead = true;
+                                    score += 10;
+                                    killCount++;
+                                }
+                            }
+                            // Create explosion visual
+                            proj.exploding = true;
+                            proj.explosionRadius = 0;
+                        }
+
+                        if (proj.style !== 'pierce') {
+                            proj.life = 0; // Destroy projectile (unless pierce)
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Remove dead projectiles
+            projectiles = projectiles.filter(p => p.life > 0);
+
+            // Remove dead bugs
+            bugs = bugs.filter(b => !b.dead);
+        }
+
+        function drawProjectiles() {
+            for (const proj of projectiles) {
+                const screenX = proj.x - camera.x;
+                const screenY = proj.y - camera.y;
+                const weapon = FRUIT_TYPES[proj.type];
+
+                if (proj.style === 'laser') {
+                    // Draw laser beam
+                    ctx.strokeStyle = weapon.color;
+                    ctx.lineWidth = 8;
+                    ctx.globalAlpha = proj.life / 10;
+                    ctx.beginPath();
+                    ctx.moveTo(screenX, screenY);
+                    ctx.lineTo(
+                        screenX + proj.vx * proj.length,
+                        screenY + proj.vy * proj.length
+                    );
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                    ctx.lineWidth = 1;
+                    continue;
+                }
+
+                if (proj.exploding) {
+                    // Draw explosion
+                    proj.explosionRadius += 5;
+                    ctx.fillStyle = weapon.color;
+                    ctx.globalAlpha = 0.5;
+                    ctx.beginPath();
+                    ctx.arc(screenX, screenY, proj.explosionRadius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                    continue;
+                }
+
+                // Draw fruit projectile
+                ctx.font = `${weapon.size * 2}px sans-serif`;
+                ctx.textAlign = 'center';
+
+                // Rotation for boomerang
+                if (proj.style === 'boomerang') {
+                    ctx.save();
+                    ctx.translate(screenX, screenY);
+                    ctx.rotate(proj.time * 0.3);
+                    ctx.fillText(weapon.emoji, 0, weapon.size / 2);
+                    ctx.restore();
+                } else {
+                    ctx.fillText(weapon.emoji, screenX, screenY + weapon.size / 2);
+                }
+
+                // Trail effect
+                ctx.fillStyle = weapon.color;
+                ctx.globalAlpha = 0.3;
+                ctx.beginPath();
+                ctx.arc(screenX - proj.vx, screenY - proj.vy, weapon.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function drawWeaponUI() {
+            if (currentWeapon) {
+                const weapon = FRUIT_TYPES[currentWeapon.type];
+                // Draw current weapon indicator
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(gameCanvas.width / 2 - 60, gameCanvas.height - 60, 120, 50);
+
+                ctx.font = '28px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(weapon.emoji, gameCanvas.width / 2 - 30, gameCanvas.height - 22);
+
+                ctx.font = '16px sans-serif';
+                ctx.fillStyle = '#fff';
+                ctx.fillText(`x${currentWeapon.ammo}`, gameCanvas.width / 2 + 10, gameCanvas.height - 25);
+
+                ctx.font = '10px sans-serif';
+                ctx.fillStyle = '#9ca3af';
+                ctx.fillText('BLINK TO SHOOT', gameCanvas.width / 2, gameCanvas.height - 45);
+            }
+        }
+
+        // ============================================
+        // ELIXIR SUPER GROW SYSTEM
+        // ============================================
+        function spawnElixirPickup() {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 300 + Math.random() * 400;
+
+            elixirPickups.push({
+                x: nodman.x + Math.cos(angle) * distance,
+                y: nodman.y + Math.sin(angle) * distance,
+                floatPhase: Math.random() * Math.PI * 2,
+                pulsePhase: 0
+            });
+        }
+
+        function updateElixirPickups() {
+            elixirSpawnTimer++;
+            // Spawn elixir every ~20 seconds (only after eating enough dots)
+            if (elixirSpawnTimer > 1200 && elixirPickups.length < 1 && nodman.dotsEaten >= MIN_DOTS_FOR_ELIXIR) {
+                spawnElixirPickup();
+                elixirSpawnTimer = 0;
+            }
+
+            // Animate
+            for (const elixir of elixirPickups) {
+                elixir.floatPhase += 0.05;
+                elixir.pulsePhase += 0.1;
+            }
+
+            // Check pickup collision
+            for (let i = elixirPickups.length - 1; i >= 0; i--) {
+                const elixir = elixirPickups[i];
+                const dx = nodman.x - elixir.x;
+                const dy = nodman.y - elixir.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < getNodmanSize() + 25) {
+                    elixirGrowActive = true;
+                    elixirGrowTimer = 0;
+                    elixirPickups.splice(i, 1);
+                }
+            }
+
+            // Remove far away pickups
+            elixirPickups = elixirPickups.filter(e => {
+                const dx = e.x - nodman.x;
+                const dy = e.y - nodman.y;
+                return Math.sqrt(dx * dx + dy * dy) < 1000;
+            });
+
+            // Update elixir grow timer
+            if (elixirGrowActive) {
+                elixirGrowTimer++;
+                if (elixirGrowTimer >= ELIXIR_GROW_DURATION) {
+                    elixirGrowActive = false;
+                    elixirGrowTimer = 0;
+                }
+            }
+        }
+
+        function drawElixirPickups() {
+            for (const elixir of elixirPickups) {
+                const screenX = elixir.x - camera.x;
+                const screenY = elixir.y - camera.y + Math.sin(elixir.floatPhase) * 10;
+
+                if (screenX < -40 || screenX > gameCanvas.width + 40) continue;
+                if (screenY < -40 || screenY > gameCanvas.height + 40) continue;
+
+                // Pulsing glow effect
+                const pulseSize = 1 + Math.sin(elixir.pulsePhase) * 0.2;
+
+                ctx.shadowColor = '#c084fc';
+                ctx.shadowBlur = 20 + Math.sin(elixir.pulsePhase) * 10;
+
+                ctx.font = `${36 * pulseSize}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('🧪', screenX, screenY + 12);
+
+                ctx.shadowBlur = 0;
+
+                // Sparkle particles
+                ctx.fillStyle = '#e879f9';
+                for (let i = 0; i < 3; i++) {
+                    const sparkleAngle = elixir.pulsePhase * 2 + i * (Math.PI * 2 / 3);
+                    const sparkleX = screenX + Math.cos(sparkleAngle) * 25;
+                    const sparkleY = screenY + Math.sin(sparkleAngle) * 25;
+                    ctx.globalAlpha = 0.5 + Math.sin(elixir.pulsePhase + i) * 0.3;
+                    ctx.beginPath();
+                    ctx.arc(sparkleX, sparkleY, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function drawElixirGrowUI() {
+            if (elixirGrowActive) {
+                // Draw elixir grow progress bar at top
+                const progress = 1 - (elixirGrowTimer / ELIXIR_GROW_DURATION);
+                const barWidth = 200;
+                const barHeight = 14;
+                const barX = (gameCanvas.width - barWidth) / 2;
+                const barY = 50;
+
+                // Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillRect(barX - 5, barY - 5, barWidth + 10, barHeight + 25);
+
+                // Progress bar background
+                ctx.fillStyle = 'rgba(192, 132, 252, 0.3)';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                // Progress bar fill
+                const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
+                gradient.addColorStop(0, '#c084fc');
+                gradient.addColorStop(1, '#e879f9');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+
+                // Border
+                ctx.strokeStyle = '#c084fc';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+                // Label
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillStyle = '#e879f9';
+                ctx.textAlign = 'center';
+                ctx.fillText('🧪 SUPER GROW - EAT TO GROW!', gameCanvas.width / 2, barY + barHeight + 15);
+            }
+        }
+
+        // ============================================
+        // BALLOON GIANT MODE SYSTEM
+        // ============================================
+        function spawnBalloonPickup() {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 350 + Math.random() * 350;
+
+            // Random balloon color - green, purple, white are immune to crush when giant
+            const colors = ['#ef4444', '#f97316', '#facc15', '#22c55e', '#3b82f6', '#c084fc', '#ffffff'];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            const immuneColors = ['#22c55e', '#c084fc', '#ffffff']; // green, purple, white
+
+            balloonPickups.push({
+                x: nodman.x + Math.cos(angle) * distance,
+                y: nodman.y + Math.sin(angle) * distance,
+                floatPhase: Math.random() * Math.PI * 2,
+                wobblePhase: Math.random() * Math.PI * 2,
+                color: color,
+                isImmune: immuneColors.includes(color)
+            });
+        }
+
+        function updateBalloonPickups() {
+            balloonSpawnTimer++;
+            // Spawn balloon every ~25 seconds (only after eating enough dots)
+            if (balloonSpawnTimer > 1500 && balloonPickups.length < 1 && nodman.dotsEaten >= MIN_DOTS_FOR_BALLOON) {
+                spawnBalloonPickup();
+                balloonSpawnTimer = 0;
+            }
+
+            // Animate
+            for (const balloon of balloonPickups) {
+                balloon.floatPhase += 0.03;
+                balloon.wobblePhase += 0.08;
+            }
+
+            // Check pickup collision
+            for (let i = balloonPickups.length - 1; i >= 0; i--) {
+                const balloon = balloonPickups[i];
+                const dx = nodman.x - balloon.x;
+                const dy = nodman.y - balloon.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                const currentSize = getNodmanSize();
+                if (dist < currentSize + 30) {
+                    giantMode = true;
+                    giantTimer = 0;
+                    balloonPickups.splice(i, 1);
+                }
+            }
+
+            // Remove far away pickups
+            balloonPickups = balloonPickups.filter(b => {
+                const dx = b.x - nodman.x;
+                const dy = b.y - nodman.y;
+                return Math.sqrt(dx * dx + dy * dy) < 1200;
+            });
+
+            // Update giant timer
+            if (giantMode) {
+                giantTimer++;
+                if (giantTimer >= GIANT_DURATION) {
+                    giantMode = false;
+                    giantTimer = 0;
+                }
+            }
+        }
+
+        function drawBalloonPickups() {
+            for (const balloon of balloonPickups) {
+                const wobble = Math.sin(balloon.wobblePhase) * 5;
+                const screenX = balloon.x - camera.x + wobble;
+                const screenY = balloon.y - camera.y + Math.sin(balloon.floatPhase) * 12;
+
+                if (screenX < -50 || screenX > gameCanvas.width + 50) continue;
+                if (screenY < -50 || screenY > gameCanvas.height + 50) continue;
+
+                // Draw balloon string
+                ctx.strokeStyle = '#9ca3af';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(screenX, screenY + 20);
+                ctx.quadraticCurveTo(screenX + wobble * 2, screenY + 40, screenX, screenY + 55);
+                ctx.stroke();
+
+                // Draw balloon body
+                ctx.fillStyle = balloon.color;
+                ctx.beginPath();
+                ctx.ellipse(screenX, screenY, 22, 28, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Balloon highlight
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.beginPath();
+                ctx.ellipse(screenX - 8, screenY - 10, 6, 10, -0.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Balloon knot
+                ctx.fillStyle = balloon.color;
+                ctx.beginPath();
+                ctx.moveTo(screenX - 5, screenY + 26);
+                ctx.lineTo(screenX + 5, screenY + 26);
+                ctx.lineTo(screenX, screenY + 32);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+
+        function drawGiantUI() {
+            if (giantMode) {
+                // Draw giant mode progress bar
+                const progress = 1 - (giantTimer / GIANT_DURATION);
+                const barWidth = 200;
+                const barHeight = 14;
+                const barX = (gameCanvas.width - barWidth) / 2;
+                const barY = elixirGrowActive ? 95 : 50; // Stack below elixir bar if both active
+
+                // Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillRect(barX - 5, barY - 5, barWidth + 10, barHeight + 25);
+
+                // Progress bar background
+                ctx.fillStyle = 'rgba(251, 146, 60, 0.3)';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                // Progress bar fill
+                const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
+                gradient.addColorStop(0, '#f97316');
+                gradient.addColorStop(1, '#fb923c');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+
+                // Border
+                ctx.strokeStyle = '#f97316';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+                // Label
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillStyle = '#fb923c';
+                ctx.textAlign = 'center';
+                ctx.fillText('🎈 GIANT MODE', gameCanvas.width / 2, barY + barHeight + 15);
+            }
+        }
+
+        // ============================================
+        // HEART EXTRA LIFE SYSTEM
+        // ============================================
+        function spawnHeartPickup() {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 250 + Math.random() * 300;
+
+            heartPickups.push({
+                x: nodman.x + Math.cos(angle) * distance,
+                y: nodman.y + Math.sin(angle) * distance,
+                floatPhase: Math.random() * Math.PI * 2,
+                pulsePhase: Math.random() * Math.PI * 2
+            });
+        }
+
+        function updateHeartPickups() {
+            heartSpawnTimer++;
+            // Spawn heart every ~15 seconds (only after eating enough dots and not at max lives)
+            if (heartSpawnTimer > 900 && heartPickups.length < 1 && lives < MAX_LIVES && nodman.dotsEaten >= MIN_DOTS_FOR_HEART) {
+                spawnHeartPickup();
+                heartSpawnTimer = 0;
+            }
+
+            // Animate
+            for (const heart of heartPickups) {
+                heart.floatPhase += 0.04;
+                heart.pulsePhase += 0.12;
+            }
+
+            // Check pickup collision
+            const currentSize = getNodmanSize();
+            for (let i = heartPickups.length - 1; i >= 0; i--) {
+                const heart = heartPickups[i];
+                const dx = nodman.x - heart.x;
+                const dy = nodman.y - heart.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < currentSize + 25) {
+                    if (lives < MAX_LIVES) {
+                        lives++;
+                    }
+                    heartPickups.splice(i, 1);
+                }
+            }
+
+            // Remove far away pickups
+            heartPickups = heartPickups.filter(h => {
+                const dx = h.x - nodman.x;
+                const dy = h.y - nodman.y;
+                return Math.sqrt(dx * dx + dy * dy) < 900;
+            });
+        }
+
+        function drawHeartPickups() {
+            for (const heart of heartPickups) {
+                const pulseScale = 1 + Math.sin(heart.pulsePhase) * 0.15;
+                const screenX = heart.x - camera.x;
+                const screenY = heart.y - camera.y + Math.sin(heart.floatPhase) * 8;
+
+                if (screenX < -40 || screenX > gameCanvas.width + 40) continue;
+                if (screenY < -40 || screenY > gameCanvas.height + 40) continue;
+
+                // Glow effect
+                ctx.shadowColor = '#ef4444';
+                ctx.shadowBlur = 15 + Math.sin(heart.pulsePhase) * 8;
+
+                ctx.font = `${32 * pulseScale}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('❤️', screenX, screenY + 10);
+
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function drawLivesUI() {
+            // Draw lives in top-right area (below webcam)
+            const startX = gameCanvas.width - 50;
+            const startY = 150;
+
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'right';
+
+            for (let i = 0; i < MAX_LIVES; i++) {
+                if (i < lives) {
+                    ctx.fillText('❤️', startX, startY + i * 30);
+                } else {
+                    ctx.globalAlpha = 0.3;
+                    ctx.fillText('🖤', startX, startY + i * 30);
+                    ctx.globalAlpha = 1;
+                }
+            }
+        }
+
+        // ============================================
+        // POWER PELLET SYSTEM (White dot - makes bugs vulnerable)
+        // ============================================
+        function spawnPowerPellet() {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 200 + Math.random() * 300;
+
+            powerPellets.push({
+                x: nodman.x + Math.cos(angle) * distance,
+                y: nodman.y + Math.sin(angle) * distance,
+                pulsePhase: 0
+            });
+        }
+
+        function updatePowerPellets() {
+            powerPelletSpawnTimer++;
+            // Spawn power pellet every 20-30 seconds (only after eating enough dots)
+            if (powerPelletSpawnTimer >= nextPowerPelletSpawn && powerPellets.length < 1 && nodman.dotsEaten >= MIN_DOTS_FOR_POWER_PELLET) {
+                spawnPowerPellet();
+                powerPelletSpawnTimer = 0;
+                nextPowerPelletSpawn = POWER_PELLET_SPAWN_MIN + Math.random() * (POWER_PELLET_SPAWN_MAX - POWER_PELLET_SPAWN_MIN);
+            }
+
+            // Animate
+            for (const pellet of powerPellets) {
+                pellet.pulsePhase += 0.1;
+            }
+
+            // Check pickup collision
+            const currentSize = getNodmanSize();
+            for (let i = powerPellets.length - 1; i >= 0; i--) {
+                const pellet = powerPellets[i];
+                const dx = nodman.x - pellet.x;
+                const dy = nodman.y - pellet.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < currentSize + 15) {
+                    powerPelletActive = true;
+                    powerPelletTimer = 0;
+                    // Mark all bugs as vulnerable
+                    for (const bug of bugs) {
+                        bug.vulnerable = true;
+                    }
+                    powerPellets.splice(i, 1);
+                }
+            }
+
+            // Remove far away pellets
+            powerPellets = powerPellets.filter(p => {
+                const dx = p.x - nodman.x;
+                const dy = p.y - nodman.y;
+                return Math.sqrt(dx * dx + dy * dy) < 800;
+            });
+
+            // Update power pellet timer
+            if (powerPelletActive) {
+                powerPelletTimer++;
+                if (powerPelletTimer >= POWER_PELLET_DURATION) {
+                    powerPelletActive = false;
+                    powerPelletTimer = 0;
+                    // Remove vulnerability from bugs
+                    for (const bug of bugs) {
+                        bug.vulnerable = false;
+                    }
+                }
+            }
+        }
+
+        function drawPowerPellets() {
+            for (const pellet of powerPellets) {
+                const screenX = pellet.x - camera.x;
+                const screenY = pellet.y - camera.y;
+
+                if (screenX < -30 || screenX > gameCanvas.width + 30) continue;
+                if (screenY < -30 || screenY > gameCanvas.height + 30) continue;
+
+                // Pulsing big white dot
+                const pulseSize = 12 + Math.sin(pellet.pulsePhase) * 3;
+
+                // Glow effect
+                ctx.shadowColor = '#ffffff';
+                ctx.shadowBlur = 20 + Math.sin(pellet.pulsePhase) * 10;
+
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, pulseSize, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Inner glow
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, pulseSize * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function drawPowerPelletUI() {
+            if (powerPelletActive) {
+                // Draw power pellet progress bar
+                const progress = 1 - (powerPelletTimer / POWER_PELLET_DURATION);
+                const barWidth = 200;
+                const barHeight = 14;
+                const barX = (gameCanvas.width - barWidth) / 2;
+                // Stack below other active bars
+                let barY = 50;
+                if (elixirGrowActive) barY += 45;
+                if (giantMode) barY += 45;
+
+                // Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillRect(barX - 5, barY - 5, barWidth + 10, barHeight + 25);
+
+                // Progress bar background
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                // Progress bar fill
+                const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
+                gradient.addColorStop(0, '#ffffff');
+                gradient.addColorStop(1, '#e5e5e5');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+
+                // Border
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+                // Label
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'center';
+                ctx.fillText('⚪ POWER MODE - EAT THE BUGS!', gameCanvas.width / 2, barY + barHeight + 15);
+            }
+        }
+
+        // ============================================
+        // BUG SPRAY REPELLENT SYSTEM
+        // ============================================
+        function spawnSprayPickup() {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 250 + Math.random() * 350;
+
+            sprayPickups.push({
+                x: nodman.x + Math.cos(angle) * distance,
+                y: nodman.y + Math.sin(angle) * distance,
+                floatPhase: Math.random() * Math.PI * 2,
+                wobblePhase: 0
+            });
+        }
+
+        function updateSprayPickups() {
+            spraySpawnTimer++;
+            // Spawn spray every 15-25 seconds (only after eating enough dots)
+            if (spraySpawnTimer >= nextSpraySpawn && sprayPickups.length < 1 && nodman.dotsEaten >= MIN_DOTS_FOR_SPRAY) {
+                spawnSprayPickup();
+                spraySpawnTimer = 0;
+                nextSpraySpawn = SPRAY_SPAWN_MIN + Math.random() * (SPRAY_SPAWN_MAX - SPRAY_SPAWN_MIN);
+            }
+
+            // Animate
+            for (const spray of sprayPickups) {
+                spray.floatPhase += 0.04;
+                spray.wobblePhase += 0.08;
+            }
+
+            // Check pickup collision
+            const currentSize = getNodmanSize();
+            for (let i = sprayPickups.length - 1; i >= 0; i--) {
+                const spray = sprayPickups[i];
+                const dx = nodman.x - spray.x;
+                const dy = nodman.y - spray.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < currentSize + 20) {
+                    sprayActive = true;
+                    sprayTimer = 0;
+                    sprayPickups.splice(i, 1);
+                }
+            }
+
+            // Remove far away pickups
+            sprayPickups = sprayPickups.filter(s => {
+                const dx = s.x - nodman.x;
+                const dy = s.y - nodman.y;
+                return Math.sqrt(dx * dx + dy * dy) < 900;
+            });
+
+            // Update spray timer
+            if (sprayActive) {
+                sprayTimer++;
+                if (sprayTimer >= SPRAY_DURATION) {
+                    sprayActive = false;
+                    sprayTimer = 0;
+                }
+            }
+        }
+
+        function drawSprayPickups() {
+            for (const spray of sprayPickups) {
+                const wobble = Math.sin(spray.wobblePhase) * 3;
+                const screenX = spray.x - camera.x + wobble;
+                const screenY = spray.y - camera.y + Math.sin(spray.floatPhase) * 8;
+
+                if (screenX < -40 || screenX > gameCanvas.width + 40) continue;
+                if (screenY < -40 || screenY > gameCanvas.height + 40) continue;
+
+                // Glow effect
+                ctx.shadowColor = '#22d3ee';
+                ctx.shadowBlur = 15;
+
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🧴', screenX, screenY + 10);
+
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function drawSprayUI() {
+            if (sprayActive) {
+                // Draw spray progress bar
+                const progress = 1 - (sprayTimer / SPRAY_DURATION);
+                const barWidth = 200;
+                const barHeight = 14;
+                const barX = (gameCanvas.width - barWidth) / 2;
+                // Stack below other active bars
+                let barY = 50;
+                if (elixirGrowActive) barY += 45;
+                if (giantMode) barY += 45;
+                if (powerPelletActive) barY += 45;
+
+                // Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillRect(barX - 5, barY - 5, barWidth + 10, barHeight + 25);
+
+                // Progress bar background
+                ctx.fillStyle = 'rgba(34, 211, 238, 0.3)';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                // Progress bar fill
+                const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
+                gradient.addColorStop(0, '#22d3ee');
+                gradient.addColorStop(1, '#67e8f9');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+
+                // Border
+                ctx.strokeStyle = '#22d3ee';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+                // Label
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillStyle = '#22d3ee';
+                ctx.textAlign = 'center';
+                ctx.fillText('🧴 BUG REPELLENT ACTIVE', gameCanvas.width / 2, barY + barHeight + 15);
+
+                // Draw repel radius around Nod-Man
+                const screenX = nodman.x - camera.x;
+                const screenY = nodman.y - camera.y;
+                ctx.strokeStyle = 'rgba(34, 211, 238, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([10, 5]);
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, SPRAY_REPEL_RADIUS, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
+        // ============================================
+        // ACHIEVEMENT POPUP
+        // ============================================
+        function drawAchievementPopup() {
+            if (achievementPopup && achievementPopup.timer > 0) {
+                achievementPopup.timer--;
+
+                const alpha = Math.min(achievementPopup.timer / 30, 1);
+                const scale = 1 + Math.sin((180 - achievementPopup.timer) * 0.05) * 0.1;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+
+                // Background
+                const boxWidth = 280;
+                const boxHeight = 80;
+                const boxX = (gameCanvas.width - boxWidth) / 2;
+                const boxY = gameCanvas.height / 2 - 150;
+
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 10);
+                ctx.fill();
+                ctx.stroke();
+
+                // Badge
+                ctx.font = `${40 * scale}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(achievementPopup.badge, gameCanvas.width / 2, boxY + 45);
+
+                // Title
+                ctx.font = 'bold 16px sans-serif';
+                ctx.fillStyle = '#ffd700';
+                ctx.fillText('ACHIEVEMENT UNLOCKED!', gameCanvas.width / 2, boxY + 20);
+
+                // Name
+                ctx.font = 'bold 14px sans-serif';
+                ctx.fillStyle = '#fff';
+                ctx.fillText(achievementPopup.name, gameCanvas.width / 2, boxY + 65);
+
+                ctx.restore();
+            }
+        }
+
+        function drawAchievementUI() {
+            const achievement = getCurrentAchievement();
+
+            // Draw current rank below the Level panel (Level panel: y=80, height=130, ends at y=210)
+            const panelX = 10;
+            const panelY = 220;  // Below Level panel with 10px gap
+            const panelWidth = 140;  // Match Level panel width
+            const panelHeight = 60;  // Height to fit progress bar
+
+            // Background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+
+            // Title
+            ctx.font = 'bold 11px sans-serif';
+            ctx.fillStyle = '#ffd700';
+            ctx.textAlign = 'left';
+            ctx.fillText('RANK', panelX + 10, panelY + 15);
+
+            if (achievement) {
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = achievement.color;
+                ctx.fillText(`${achievement.badge} ${achievement.name}`, panelX + 10, panelY + 32);
+            } else {
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = '#9ca3af';
+                ctx.fillText('🎮 Rookie', panelX + 10, panelY + 32);
+            }
+
+            // Show next achievement progress
+            const nextAchievement = ACHIEVEMENTS.find(a => !unlockedAchievements.includes(a.id));
+            if (nextAchievement) {
+                const progress = Math.min(nodman.dotsEaten / nextAchievement.dots, 1);
+                ctx.font = '9px sans-serif';
+                ctx.fillStyle = '#9ca3af';
+                ctx.fillText(`Next: ${nextAchievement.badge} ${nodman.dotsEaten}/${nextAchievement.dots}`, panelX + 10, panelY + 47);
+
+                // Mini progress bar (below the text)
+                const barX = panelX + 10;
+                const barWidth = panelWidth - 20;
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.fillRect(barX, panelY + 50, barWidth, 4);
+                ctx.fillStyle = nextAchievement.color;
+                ctx.fillRect(barX, panelY + 50, barWidth * progress, 4);
+            }
+        }
+
+        // ============================================
+        // LEVEL & HEAD MOVEMENT TRACKING SYSTEM
+        // ============================================
+        let levelUpAnimation = 0;
+
+        function checkLevelUp() {
+            const nextLevel = currentLevel + 1;
+            const required = MOVEMENTS_TO_LEVEL_UP * currentLevel;
+
+            if (headMovements.left >= required &&
+                headMovements.right >= required &&
+                headMovements.up >= required &&
+                headMovements.down >= required) {
+                currentLevel++;
+                levelUpAnimation = 180; // 3 seconds animation
+
+                // Bonus for leveling up
+                score += 500 * currentLevel;
+                scoreEl.textContent = score;
+
+                // Give a life as reward
+                if (lives < MAX_LIVES) {
+                    lives++;
+                }
+            }
+        }
+
+        function drawMovementStatsUI() {
+            const required = MOVEMENTS_TO_LEVEL_UP * currentLevel;
+
+            // Panel position (left side, below score)
+            const panelX = 10;
+            const panelY = 80;
+            const panelWidth = 140;
+            const panelHeight = 130;
+
+            // Background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+
+            // Level display
+            ctx.font = 'bold 14px sans-serif';
+            ctx.fillStyle = '#facc15';
+            ctx.textAlign = 'left';
+            ctx.fillText(`LEVEL ${currentLevel}`, panelX + 10, panelY + 20);
+
+            // Movement bars
+            const barWidth = 80;
+            const barHeight = 10;
+            const barX = panelX + 50;
+
+            const movements = [
+                { label: '←', count: headMovements.left, color: '#3b82f6' },
+                { label: '→', count: headMovements.right, color: '#22c55e' },
+                { label: '↑', count: headMovements.up, color: '#f97316' },
+                { label: '↓', count: headMovements.down, color: '#c084fc' }
+            ];
+
+            movements.forEach((m, i) => {
+                const y = panelY + 40 + i * 22;
+                const progress = Math.min(m.count / required, 1);
+
+                // Label
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'left';
+                ctx.fillText(m.label, panelX + 10, y + 8);
+
+                // Count
+                ctx.font = '10px sans-serif';
+                ctx.fillStyle = '#9ca3af';
+                ctx.textAlign = 'right';
+                ctx.fillText(`${Math.min(m.count, required)}/${required}`, panelX + panelWidth - 10, y + 8);
+
+                // Bar background
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.fillRect(barX, y, barWidth, barHeight);
+
+                // Bar fill
+                ctx.fillStyle = m.color;
+                ctx.fillRect(barX, y, barWidth * progress, barHeight);
+
+                // Completed indicator
+                if (progress >= 1) {
+                    ctx.fillStyle = '#22c55e';
+                    ctx.font = '10px sans-serif';
+                    ctx.textAlign = 'left';
+                    ctx.fillText('✓', panelX + 30, y + 8);
+                }
+            });
+        }
+
+        function drawSizeStatusUI() {
+            // Panel position (right side, below lives - Lives at y=150, 3 hearts end at ~y=240)
+            const panelX = gameCanvas.width - 160;
+            const panelY = 260;  // Below lives with proper spacing
+            const panelWidth = 150;
+            const panelHeight = 90;
+
+            // Background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+
+            // Title
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillStyle = '#facc15';
+            ctx.textAlign = 'left';
+            ctx.fillText('SIZE STATUS', panelX + 10, panelY + 18);
+
+            // Dots eaten
+            ctx.font = '11px sans-serif';
+            ctx.fillStyle = '#fef08a';
+            ctx.fillText(`🟡 Dots: ${nodman.dotsEaten}`, panelX + 10, panelY + 38);
+
+            // Current size (capped at MAX_SIZE display)
+            const displaySize = Math.min(nodman.sizePoints, MAX_SIZE);
+            const isCapped = nodman.sizePoints >= MAX_SIZE;
+            ctx.fillStyle = isCapped ? '#ffd700' : '#22c55e';
+            ctx.fillText(`📐 Size: ${displaySize}px${isCapped ? ' (MAX)' : ''}`, panelX + 10, panelY + 55);
+
+            // Hits remaining bar
+            const hitsRemaining = getHitsRemaining();
+
+            ctx.fillStyle = '#ef4444';
+            ctx.fillText(`💥 Hits left: ${hitsRemaining}`, panelX + 10, panelY + 72);
+
+            // Visual health bar
+            const barX = panelX + 10;
+            const barY = panelY + 78;
+            const barWidth = panelWidth - 20;
+            const barHeight = 6;
+
+            // Bar background
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.3)';
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+
+            // Bar fill (based on size points relative to max size)
+            const healthPercent = Math.min(1, (nodman.sizePoints - MIN_SIZE) / (MAX_SIZE - MIN_SIZE));
+            ctx.fillStyle = healthPercent > 0.5 ? '#22c55e' : healthPercent > 0.25 ? '#facc15' : '#ef4444';
+            ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+        }
+
+        function drawLevelUpAnimation() {
+            if (levelUpAnimation > 0) {
+                levelUpAnimation--;
+
+                const alpha = Math.min(levelUpAnimation / 60, 1);
+                const scale = 1 + (180 - levelUpAnimation) * 0.01;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.font = `bold ${48 * scale}px sans-serif`;
+                ctx.fillStyle = '#facc15';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#facc15';
+                ctx.shadowBlur = 20;
+
+                ctx.fillText(`LEVEL ${currentLevel}!`, gameCanvas.width / 2, gameCanvas.height / 2 - 50);
+
+                ctx.font = '24px sans-serif';
+                ctx.fillStyle = '#22c55e';
+                ctx.fillText(`+${500 * currentLevel} bonus!`, gameCanvas.width / 2, gameCanvas.height / 2);
+
+                ctx.restore();
+            }
+        }
+
+        // Update Nod-Man position
+        function updateNodman() {
+            // Move based on head direction
+            if (headDirection.x !== 0 || headDirection.y !== 0) {
+                nodman.x += headDirection.x * NODMAN_SPEED;
+                nodman.y += headDirection.y * NODMAN_SPEED;
+
+                // Update facing direction
+                nodman.direction = Math.atan2(headDirection.y, headDirection.x);
+
+                // Track head movements (only count when direction changes)
+                if (headDirection.x === -1 && lastHeadDirection.x !== -1) {
+                    headMovements.left++;
+                }
+                if (headDirection.x === 1 && lastHeadDirection.x !== 1) {
+                    headMovements.right++;
+                }
+                if (headDirection.y === -1 && lastHeadDirection.y !== -1) {
+                    headMovements.up++;
+                }
+                if (headDirection.y === 1 && lastHeadDirection.y !== 1) {
+                    headMovements.down++;
+                }
+
+                lastHeadDirection.x = headDirection.x;
+                lastHeadDirection.y = headDirection.y;
+            } else {
+                // Reset last direction when centered
+                lastHeadDirection.x = 0;
+                lastHeadDirection.y = 0;
+            }
+
+            // Check for level up
+            checkLevelUp();
+
+            // Animate mouth
+            nodman.mouthOpen = (Math.sin(Date.now() / 100) + 1) / 2 * 0.5;
+
+            // Update camera to follow Nod-Man
+            camera.x = nodman.x - gameCanvas.width / 2;
+            camera.y = nodman.y - gameCanvas.height / 2;
+
+            // Generate chunks around player
+            getChunksAround(nodman.x, nodman.y, 2);
+
+            // Check dot collision
+            checkDotCollision();
+
+            // Occasionally clean up far chunks
+            if (Math.random() < 0.01) {
+                cleanupChunks();
+            }
+        }
+
+        // Check collision with dots
+        function checkDotCollision() {
+            const currentSize = getNodmanSize();
+            for (const [key, chunk] of chunks) {
+                for (const dot of chunk.dots) {
+                    if (dot.eaten) continue;
+
+                    const dx = nodman.x - dot.x;
+                    const dy = nodman.y - dot.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    // Power pellets have larger collision radius
+                    const collisionRadius = dot.isPowerPellet ? currentSize + 5 : currentSize;
+
+                    if (dist < collisionRadius) {
+                        dot.eaten = true;
+                        score++;
+                        nodman.dotsEaten++;
+                        scoreEl.textContent = score;
+
+                        // If it's a power pellet, activate power mode!
+                        if (dot.isPowerPellet) {
+                            powerPelletActive = true;
+                            powerPelletTimer = 0;
+                            // Mark all bugs as vulnerable
+                            for (const bug of bugs) {
+                                bug.vulnerable = true;
+                            }
+                        }
+
+                        // Grow if elixir grow mode is active
+                        if (elixirGrowActive) {
+                            const maxNormalSize = NODMAN_BASE_SIZE * 5;
+                            if (nodman.sizePoints < maxNormalSize) {
+                                // Normal growth: 1 pixel per dot
+                                nodman.sizePoints += 1;
+                            } else {
+                                // Log scale growth after 5x size
+                                // Smaller increments as size increases
+                                const logGrowth = 1 / Math.log2(nodman.sizePoints / NODMAN_BASE_SIZE + 1);
+                                nodman.sizePoints += logGrowth;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw everything
+        function draw() {
+            // Clear with dark background
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+            // Draw grid lines (subtle)
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 1;
+            const gridSize = DOT_SPACING;
+            const offsetX = -camera.x % gridSize;
+            const offsetY = -camera.y % gridSize;
+
+            for (let x = offsetX; x < gameCanvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, gameCanvas.height);
+                ctx.stroke();
+            }
+            for (let y = offsetY; y < gameCanvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(gameCanvas.width, y);
+                ctx.stroke();
+            }
+
+            // Draw dots
+            for (const [key, chunk] of chunks) {
+                for (const dot of chunk.dots) {
+                    if (dot.eaten) continue;
+
+                    const screenX = dot.x - camera.x;
+                    const screenY = dot.y - camera.y;
+
+                    // Only draw if on screen
+                    if (screenX < -DOT_RADIUS * 3 || screenX > gameCanvas.width + DOT_RADIUS * 3) continue;
+                    if (screenY < -DOT_RADIUS * 3 || screenY > gameCanvas.height + DOT_RADIUS * 3) continue;
+
+                    if (dot.isPowerPellet) {
+                        // Draw power pellet - larger white pulsing dot
+                        const pulseSize = DOT_RADIUS * 2.5 + Math.sin(Date.now() / 200) * 2;
+                        ctx.shadowColor = '#ffffff';
+                        ctx.shadowBlur = 10 + Math.sin(Date.now() / 150) * 5;
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.arc(screenX, screenY, pulseSize, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                    } else {
+                        // Regular dot
+                        ctx.fillStyle = '#fef08a';
+                        ctx.beginPath();
+                        ctx.arc(screenX, screenY, DOT_RADIUS, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // Draw Nod-Man
+            const screenX = nodman.x - camera.x;
+            const screenY = nodman.y - camera.y;
+
+            // Calculate current size (giant mode)
+            const currentSize = getNodmanSize();
+            const eyeSize = giantMode ? 8 : 4;
+
+            // Get current achievement for colors
+            const achievement = getCurrentAchievement();
+            let nodmanColor = '#facc15'; // Default yellow
+            let eyeColor = '#000';
+            let glowColor = null;
+
+            // Apply achievement colors
+            if (achievement) {
+                nodmanColor = achievement.color;
+                if (achievement.eyeColor) eyeColor = achievement.eyeColor;
+                if (achievement.glow) glowColor = achievement.glow;
+
+                // Rainbow effect for legend achievement
+                if (achievement.rainbow) {
+                    const hue = (Date.now() / 20) % 360;
+                    nodmanColor = `hsl(${hue}, 100%, 60%)`;
+                    glowColor = `hsl(${hue}, 100%, 50%)`;
+                }
+
+                // Golden shimmer effect
+                if (achievement.golden) {
+                    const shimmer = Math.sin(Date.now() / 100) * 0.3 + 0.7;
+                    ctx.shadowColor = '#ffd700';
+                    ctx.shadowBlur = 30 * shimmer;
+                }
+            }
+
+            // Elixir grow glow effect (overrides achievement)
+            if (elixirGrowActive) {
+                ctx.shadowColor = '#c084fc';
+                ctx.shadowBlur = 25 + Math.sin(Date.now() / 100) * 10;
+                nodmanColor = '#e879f9'; // Purple when elixir grow active
+            } else if (giantMode) {
+                ctx.shadowColor = '#f97316';
+                ctx.shadowBlur = 30 + Math.sin(Date.now() / 80) * 15;
+                nodmanColor = '#fb923c'; // Orange when giant
+            } else if (glowColor) {
+                ctx.shadowColor = glowColor;
+                ctx.shadowBlur = 20 + Math.sin(Date.now() / 150) * 10;
+            }
+
+            ctx.fillStyle = nodmanColor;
+            ctx.beginPath();
+
+            // Pac-Man with mouth animation
+            const mouthAngle = nodman.mouthOpen * Math.PI / 4;
+            ctx.arc(
+                screenX,
+                screenY,
+                currentSize,
+                nodman.direction + mouthAngle,
+                nodman.direction + Math.PI * 2 - mouthAngle
+            );
+            ctx.lineTo(screenX, screenY);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.shadowBlur = 0;
+
+            // Eye - always on the upper side of Nod-Man relative to direction
+            // Calculate eye position perpendicular to mouth direction (rotated 90 degrees counter-clockwise)
+            const eyeOffsetAngle = nodman.direction - Math.PI / 2;
+            const eyeDistanceFromCenter = currentSize * 0.5;
+            // Position eye slightly forward in the direction of movement
+            const eyeForwardOffset = currentSize * 0.3;
+            const eyeX = screenX + Math.cos(nodman.direction) * eyeForwardOffset + Math.cos(eyeOffsetAngle) * eyeDistanceFromCenter * 0.6;
+            const eyeY = screenY + Math.sin(nodman.direction) * eyeForwardOffset + Math.sin(eyeOffsetAngle) * eyeDistanceFromCenter * 0.6;
+            ctx.fillStyle = eyeColor;
+            ctx.beginPath();
+            ctx.arc(eyeX, eyeY, eyeSize, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw achievement badge above Nod-Man
+            if (achievement) {
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(achievement.badge, screenX, screenY - currentSize - 10);
+            }
+        }
+
+        // Draw game over screen
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 48px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', gameCanvas.width / 2, gameCanvas.height / 2 - 100);
+
+            ctx.font = '20px sans-serif';
+            ctx.fillStyle = '#facc15';
+            ctx.fillText(`Level ${currentLevel} | Score: ${score}`, gameCanvas.width / 2, gameCanvas.height / 2 - 55);
+
+            ctx.font = '16px sans-serif';
+            ctx.fillStyle = '#ef4444';
+            ctx.fillText(`🐛 Bugs squashed: ${killCount}`, gameCanvas.width / 2, gameCanvas.height / 2 - 25);
+
+            // Movement stats
+            ctx.font = '14px sans-serif';
+            ctx.fillStyle = '#9ca3af';
+            ctx.fillText(`Head movements: ← ${headMovements.left} | → ${headMovements.right} | ↑ ${headMovements.up} | ↓ ${headMovements.down}`,
+                gameCanvas.width / 2, gameCanvas.height / 2 + 10);
+
+            const totalMovements = headMovements.left + headMovements.right + headMovements.up + headMovements.down;
+            ctx.fillText(`Total: ${totalMovements} movements`, gameCanvas.width / 2, gameCanvas.height / 2 + 35);
+
+            ctx.fillStyle = '#6b7280';
+            ctx.fillText('A bug got you!', gameCanvas.width / 2, gameCanvas.height / 2 + 70);
+
+            ctx.fillStyle = '#22c55e';
+            ctx.fillText('Press SPACE or tilt head to restart', gameCanvas.width / 2, gameCanvas.height / 2 + 100);
+        }
+
+        // Game loop
+        function gameLoop() {
+            if (!gameOver) {
+                updateNodman();
+                updateBugs();
+                updateFruitPickups();
+                updateElixirPickups();
+                updateBalloonPickups();
+                updateHeartPickups();
+                updatePowerPellets();
+                updateSprayPickups();
+                updateProjectiles();
+                checkAchievements();
+
+                // Check for blink to shoot
+                if (blinkTriggered && currentWeapon) {
+                    fireWeapon();
+                    blinkTriggered = false;
+                }
+
+                // Check for bug collision
+                if (checkBugCollision()) {
+                    gameOver = true;
+                }
+            } else {
+                // Check for restart (any head movement or space)
+                if (headDirection.x !== 0 || headDirection.y !== 0) {
+                    resetGame();
+                }
+            }
+
+            // Always reset blink trigger
+            blinkTriggered = false;
+
+            draw();
+            drawFruitPickups();
+            drawElixirPickups();
+            drawBalloonPickups();
+            drawHeartPickups();
+            drawPowerPellets();
+            drawSprayPickups();
+            drawBugs();
+            drawProjectiles();
+            drawWeaponUI();
+            drawElixirGrowUI();
+            drawGiantUI();
+            drawPowerPelletUI();
+            drawSprayUI();
+            drawLivesUI();
+            drawMovementStatsUI();
+            drawSizeStatusUI();
+            drawAchievementUI();
+            drawLevelUpAnimation();
+            drawAchievementPopup();
+
+            if (gameOver) {
+                drawGameOver();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Keyboard fallback
+        const keysPressed = new Set();
+        document.addEventListener('keydown', (e) => {
+            keysPressed.add(e.code);
+            updateKeyboardDirection();
+
+            // Space to shoot or restart
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameOver) {
+                    resetGame();
+                } else if (currentWeapon) {
+                    fireWeapon();
+                }
+            }
+        });
+        document.addEventListener('keyup', (e) => {
+            keysPressed.delete(e.code);
+            updateKeyboardDirection();
+        });
+
+        function updateKeyboardDirection() {
+            // Only use keyboard if no head tracking
+            if (headDirection.x === 0 && headDirection.y === 0) {
+                if (keysPressed.has('ArrowLeft') || keysPressed.has('KeyA')) {
+                    headDirection.x = -1;
+                } else if (keysPressed.has('ArrowRight') || keysPressed.has('KeyD')) {
+                    headDirection.x = 1;
+                } else {
+                    headDirection.x = 0;
+                }
+
+                if (keysPressed.has('ArrowUp') || keysPressed.has('KeyW')) {
+                    headDirection.y = -1;
+                } else if (keysPressed.has('ArrowDown') || keysPressed.has('KeyS')) {
+                    headDirection.y = 1;
+                } else {
+                    headDirection.y = 0;
+                }
+            }
+        }
+
+        // Share button
+        document.getElementById('btn-share').addEventListener('click', () => {
+            const totalMovements = headMovements.left + headMovements.right + headMovements.up + headMovements.down;
+            const text = `🟡 I just played Nod-Man - Pac-Man controlled by head movements!\n\nLevel ${currentLevel} | Score: ${score} | 🐛 ${killCount} bugs | 🏃 ${totalMovements} head moves\n\nBeat me if you can:`;
+            const url = 'https://projects.thapakazi.com/nod-man/';
+            const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
+            window.open(tweetUrl, '_blank', 'width=550,height=420');
+        });
+
+        // ============================================
+        // INIT
+        // ============================================
+        async function init() {
+            // Generate initial chunks
+            getChunksAround(0, 0, 2);
+
+            const cam = await setupCamera();
+            if (cam) {
+                const loaded = await loadModel();
+                if (loaded) {
+                    detectFace();
+                }
+            }
+            gameLoop();
+        }
+
+        init();
+    </script>
+</body>
+</html>
