@@ -78,6 +78,10 @@
                 <button id="btn-normal" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition">Slow</button>
                 <button id="btn-hard" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-sm font-medium transition">Hard</button>
                 <button id="btn-eyecare" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-sm font-medium transition">Eye Care</button>
+                <button id="btn-share" class="px-4 py-2 bg-black hover:bg-gray-900 rounded-lg text-sm font-medium transition flex items-center gap-1">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                    Share
+                </button>
             </div>
 
             <div id="status" class="mt-4 p-2 bg-gray-700 rounded-lg text-sm text-center">
@@ -97,7 +101,9 @@
                 <div class="text-gray-300 space-y-1">
                     <p><span class="text-green-400">Blink</span> to jump</p>
                     <p>Avoid the cacti</p>
-                    <p>Catch 💚 for extra life!</p>
+                    <p>💚 = extra life</p>
+                    <p>🛡️ = immunity (5s)</p>
+                    <p>⏸️ = pause (10s)</p>
                 </div>
                 <div class="border-t border-gray-600 pt-2 mt-2">
                     <p class="text-gray-400 mb-1">Modes:</p>
@@ -344,9 +350,18 @@
             },
 
             draw() {
-                // Body
-                ctx.fillStyle = '#22c55e';
+                // Body - golden when immune
+                const bodyColor = immunityActive ? '#fbbf24' : '#22c55e';
+                ctx.fillStyle = bodyColor;
                 ctx.fillRect(this.x, this.y - this.height, this.width, this.height);
+
+                // Glow effect when immune
+                if (immunityActive) {
+                    ctx.shadowColor = '#fbbf24';
+                    ctx.shadowBlur = 15;
+                    ctx.fillRect(this.x, this.y - this.height, this.width, this.height);
+                    ctx.shadowBlur = 0;
+                }
 
                 // Eye
                 ctx.fillStyle = '#fff';
@@ -359,7 +374,7 @@
                 ctx.fill();
 
                 // Legs
-                ctx.fillStyle = '#22c55e';
+                ctx.fillStyle = bodyColor;
                 if (this.isJumping) {
                     ctx.fillRect(this.x + 5, this.y, 10, 15);
                     ctx.fillRect(this.x + 25, this.y, 10, 15);
@@ -381,6 +396,20 @@
         let powerupTimer = 0;
         let lives = 0;
         const MAX_LIVES = 3;
+
+        // Clock power-up (immunity mode)
+        let clocks = [];
+        let clockTimer = 0;
+        let immunityActive = false;
+        let immunityTimer = 0;
+        const IMMUNITY_DURATION = 300; // 5 seconds at 60fps
+
+        // Pause power-up
+        let pausePickups = [];
+        let pausePickupTimer = 0;
+        let gamePaused = false;
+        let pauseTimer = 0;
+        const PAUSE_DURATION = 600; // 10 seconds at 60fps
 
         function spawnObstacle() {
             const height = 30 + Math.random() * 30;
@@ -479,6 +508,215 @@
             return false;
         }
 
+        // Clock power-up functions (immunity)
+        function spawnClock() {
+            const y = GROUND_Y - 100 - Math.random() * 50;
+            clocks.push({
+                x: gameCanvas.width,
+                y: y,
+                width: 30,
+                height: 30,
+                floatOffset: 0
+            });
+        }
+
+        function updateClocks() {
+            clockTimer++;
+            // Spawn clock randomly after 10 seconds (600 frames), then every 15-25 seconds
+            if (clockTimer > 600 + Math.random() * 600) {
+                if (!immunityActive) {
+                    spawnClock();
+                }
+                clockTimer = 0;
+            }
+
+            clocks.forEach(c => {
+                c.x -= gameSpeed;
+                c.floatOffset = Math.sin(Date.now() / 150) * 6;
+            });
+
+            clocks = clocks.filter(c => c.x + c.width > 0);
+
+            // Handle immunity duration
+            if (immunityActive) {
+                immunityTimer++;
+                if (immunityTimer >= IMMUNITY_DURATION) {
+                    immunityActive = false;
+                    immunityTimer = 0;
+                }
+            }
+        }
+
+        function drawClocks() {
+            clocks.forEach(c => {
+                const drawY = c.y + c.floatOffset;
+                ctx.font = '26px sans-serif';
+                ctx.fillText('🛡️', c.x, drawY + 22);
+            });
+
+            // Draw immunity progress bar
+            if (immunityActive) {
+                const progress = 1 - (immunityTimer / IMMUNITY_DURATION);
+                const barWidth = 150;
+                const barHeight = 12;
+                const barX = (gameCanvas.width - barWidth) / 2;
+                const barY = 15;
+
+                // Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                // Progress
+                ctx.fillStyle = '#fbbf24'; // Golden
+                ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+
+                // Border
+                ctx.strokeStyle = '#fbbf24';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+                // Label
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillStyle = '#fbbf24';
+                ctx.textAlign = 'center';
+                ctx.fillText('🛡️ IMMUNITY', gameCanvas.width / 2, barY + barHeight + 15);
+            }
+        }
+
+        function checkClockCollision() {
+            const dinoBox = {
+                x: dino.x + 5,
+                y: dino.y - dino.height + 5,
+                width: dino.width - 10,
+                height: dino.height - 10
+            };
+
+            for (let i = clocks.length - 1; i >= 0; i--) {
+                const c = clocks[i];
+                if (
+                    dinoBox.x < c.x + c.width &&
+                    dinoBox.x + dinoBox.width > c.x &&
+                    dinoBox.y < c.y + c.height &&
+                    dinoBox.y + dinoBox.height > c.y
+                ) {
+                    // Collected! Activate immunity
+                    clocks.splice(i, 1);
+                    immunityActive = true;
+                    immunityTimer = 0;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Pause power-up functions
+        function spawnPausePickup() {
+            const y = GROUND_Y - 80 - Math.random() * 70;
+            pausePickups.push({
+                x: gameCanvas.width,
+                y: y,
+                width: 30,
+                height: 30,
+                floatOffset: 0
+            });
+        }
+
+        function updatePausePickups() {
+            if (!gamePaused) {
+                pausePickupTimer++;
+                // Spawn pause pickup after 15 seconds, then every 20-30 seconds
+                if (pausePickupTimer > 900 + Math.random() * 600) {
+                    spawnPausePickup();
+                    pausePickupTimer = 0;
+                }
+
+                pausePickups.forEach(p => {
+                    p.x -= gameSpeed;
+                    p.floatOffset = Math.sin(Date.now() / 180) * 5;
+                });
+
+                pausePickups = pausePickups.filter(p => p.x + p.width > 0);
+            }
+
+            // Handle pause duration
+            if (gamePaused) {
+                pauseTimer++;
+                if (pauseTimer >= PAUSE_DURATION) {
+                    gamePaused = false;
+                    pauseTimer = 0;
+                }
+            }
+        }
+
+        function drawPausePickups() {
+            pausePickups.forEach(p => {
+                const drawY = p.y + p.floatOffset;
+                ctx.font = '26px sans-serif';
+                ctx.fillText('⏸️', p.x, drawY + 22);
+            });
+
+            // Draw pause overlay and progress bar
+            if (gamePaused) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+                const progress = 1 - (pauseTimer / PAUSE_DURATION);
+                const barWidth = 200;
+                const barHeight = 15;
+                const barX = (gameCanvas.width - barWidth) / 2;
+                const barY = gameCanvas.height / 2 - 40;
+
+                // Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(barX - 10, barY - 30, barWidth + 20, 80);
+
+                // Progress bar background
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                // Progress
+                ctx.fillStyle = '#a855f7'; // Purple
+                ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+
+                // Border
+                ctx.strokeStyle = '#a855f7';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+                // Label
+                ctx.font = 'bold 20px sans-serif';
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.fillText('⏸️ PAUSED', gameCanvas.width / 2, barY + barHeight + 25);
+            }
+        }
+
+        function checkPausePickupCollision() {
+            const dinoBox = {
+                x: dino.x + 5,
+                y: dino.y - dino.height + 5,
+                width: dino.width - 10,
+                height: dino.height - 10
+            };
+
+            for (let i = pausePickups.length - 1; i >= 0; i--) {
+                const p = pausePickups[i];
+                if (
+                    dinoBox.x < p.x + p.width &&
+                    dinoBox.x + dinoBox.width > p.x &&
+                    dinoBox.y < p.y + p.height &&
+                    dinoBox.y + dinoBox.height > p.y
+                ) {
+                    // Collected! Activate pause
+                    pausePickups.splice(i, 1);
+                    gamePaused = true;
+                    pauseTimer = 0;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         function drawObstacles() {
             ctx.fillStyle = '#ef4444';
             obstacles.forEach(obs => {
@@ -542,6 +780,14 @@
             obstacleTimer = 0;
             powerups = [];
             powerupTimer = 0;
+            clocks = [];
+            clockTimer = 0;
+            immunityActive = false;
+            immunityTimer = 0;
+            pausePickups = [];
+            pausePickupTimer = 0;
+            gamePaused = false;
+            pauseTimer = 0;
             lives = 0;
             gameSpeed = mode.startSpeed;
             score = 0;
@@ -568,37 +814,47 @@
             }
 
             if (gameRunning) {
-                // Check for blink jump
-                if (blinkDetected) {
+                // Check for blink jump (even when paused)
+                if (blinkDetected && !gamePaused) {
                     dino.jump();
                     blinkDetected = false;
                 }
 
-                dino.update();
-                updateObstacles();
-                updatePowerups();
-                checkPowerupCollision();
+                // Update pause pickups and timer (always)
+                updatePausePickups();
 
-                // Increase speed and score
-                const mode = MODES[currentMode];
-                score++;
-                if (score % mode.speedUpInterval === 0 && gameSpeed < mode.maxSpeed) {
-                    gameSpeed += mode.speedIncrement;
-                }
-                scoreEl.textContent = Math.floor(score / 10);
+                // Only update game if not paused
+                if (!gamePaused) {
+                    dino.update();
+                    updateObstacles();
+                    updatePowerups();
+                    updateClocks();
+                    checkPowerupCollision();
+                    checkClockCollision();
+                    checkPausePickupCollision();
 
-                if (checkCollision()) {
-                    if (lives > 0) {
-                        // Use a life instead of dying
-                        lives--;
-                        // Remove the obstacle that hit us
-                        obstacles.shift();
-                    } else {
-                        gameRunning = false;
-                        if (score > highScore) {
-                            highScore = score;
-                            localStorage.setItem(`blinkJumpHighScore_${currentMode}`, highScore.toString());
-                            highScoreEl.textContent = Math.floor(highScore / 10);
+                    // Increase speed and score
+                    const mode = MODES[currentMode];
+                    score++;
+                    if (score % mode.speedUpInterval === 0 && gameSpeed < mode.maxSpeed) {
+                        gameSpeed += mode.speedIncrement;
+                    }
+                    scoreEl.textContent = Math.floor(score / 10);
+
+                    // Check collision - skip if immune
+                    if (checkCollision() && !immunityActive) {
+                        if (lives > 0) {
+                            // Use a life instead of dying
+                            lives--;
+                            // Remove the obstacle that hit us
+                            obstacles.shift();
+                        } else {
+                            gameRunning = false;
+                            if (score > highScore) {
+                                highScore = score;
+                                localStorage.setItem(`blinkJumpHighScore_${currentMode}`, highScore.toString());
+                                highScoreEl.textContent = Math.floor(highScore / 10);
+                            }
                         }
                     }
                 }
@@ -670,6 +926,8 @@
             dino.draw();
             drawObstacles();
             drawPowerups();
+            drawClocks();
+            drawPausePickups();
 
             requestAnimationFrame(gameLoop);
         }
@@ -678,6 +936,16 @@
         btnNormal.addEventListener('click', () => setMode('normal'));
         btnHard.addEventListener('click', () => setMode('hard'));
         btnEyecare.addEventListener('click', () => setMode('eyecare'));
+
+        // Share button
+        const btnShare = document.getElementById('btn-share');
+        btnShare.addEventListener('click', () => {
+            const currentScore = Math.floor(score / 10);
+            const text = `👁️ I just played Blink & Jump - a game you control with your eyes! My score: ${currentScore} 🦖\n\nTry it yourself:`;
+            const url = 'https://projects.thapakazi.com/blink-n-jump/';
+            const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
+            window.open(tweetUrl, '_blank', 'width=550,height=420');
+        });
 
         // Keyboard fallback
         document.addEventListener('keydown', (e) => {
