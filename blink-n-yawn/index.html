@@ -3,258 +3,445 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eye Blink Counter & Outline</title>
+    <title>Real-Time Face Mesh Detector</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Load required TensorFlow.js libraries -->
+    <!-- 1. TensorFlow Core -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
+
+    <!-- 2. FIX: Explicitly load the core MediaPipe Face Mesh library first.
+         This ensures the underlying constructor object (FaceMesh) is available
+         before the TensorFlow model wrapper attempts to access it. -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+
+    <!-- 3. TensorFlow Face Landmarks Detection Wrapper -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.1/dist/face-landmarks-detection.min.js"></script>
+
     <style>
-        /* Styles for clean, centered layout and responsiveness */
+        /* Custom CSS for layout */
         body {
             font-family: 'Inter', sans-serif;
-            text-align: center;
-            padding: 1rem;
-            background-color: #f0f4f8;
-            color: #1e293b;
-        }
-        h1 {
-            color: #0d9488;
-            margin-bottom: 0.5rem;
-        }
-        #video-container {
-            position: relative;
-            /* Use fluid width for responsiveness */
-            width: 90vw;
-            max-width: 640px;
-            aspect-ratio: 4 / 3; /* Maintain 4:3 aspect ratio */
-            margin: 1.5rem auto;
-            border: 3px solid #0d9488;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         }
         #video, #canvas {
-            width: 100%;
-            height: 100%;
             position: absolute;
             top: 0;
             left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* Ensure video covers container */
+            transform: scaleX(-1); /* Flip video horizontally for selfie view */
+        }
+        #container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 4/3; /* Standard webcam aspect ratio */
+            margin: auto;
+            border: 2px solid #3b82f6;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            background-color: #1f2937;
+        }
+        #counter-container {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            display: flex;
+            gap: 1rem;
             z-index: 10;
         }
-        #video {
-            /* Flips the video for a natural mirror effect */
-            transform: scaleX(-1);
-            z-index: 5;
-        }
-        #canvas {
-            /* Canvas is responsible for drawing outlines */
-            z-index: 10;
-        }
-        #counter-box {
-            background-color: #ffffff;
-            padding: 1.5rem 2rem;
-            margin-top: 1rem;
-            border-radius: 8px;
-            display: inline-block;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        }
-        #status {
-            font-size: 1.1em;
-            color: #475569;
-            margin-bottom: 0.5rem;
-        }
-        #counter {
-            font-size: 2.8em;
-            font-weight: 700;
-            color: #0ea5e9;
+        .counter-box {
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #3b82f6;
         }
     </style>
 </head>
-<body>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4"><style id="project-nav-style">.project-nav{font-family:"SF Mono","Monaco","Menlo",monospace;background:#1a1a2e;padding:0.5rem 1rem;font-size:0.9rem;}.project-nav a{color:#00d9ff;text-decoration:none;}.project-nav a:hover{text-decoration:underline;}.project-nav .sep{color:#666;}</style><nav class="project-nav"><a href="../index.html">~/projects</a><span class="sep">/</span><span>blink-n-yawn</span></nav>
 
-    <h1>👁️ Eye Blink Counter</h1>
-    <p>Please allow camera access. The eye outlines will appear once tracking begins.</p>
+    <h1 class="text-3xl font-extrabold mb-2 text-blue-400">Face Mesh Tracking: Blink & Yawn Counter</h1>
+    <p class="text-gray-400 text-sm mb-6">don't worry, i am not collecting/using any of your data!!</p>
 
-    <div id="video-container">
-        <!-- The video element provides the raw pixel data for TF.js -->
-        <video id="video" autoplay playsinline></video>
-        <!-- The canvas is where we draw the outlines and landmarks -->
-        <canvas id="canvas"></canvas>
+    <div class="flex flex-col lg:flex-row gap-4 w-full max-w-6xl items-start justify-center">
+        <!-- Video Container (80%) -->
+        <div class="flex flex-col items-center lg:flex-1">
+            <div id="container">
+                <!-- Counters Overlay -->
+                <div id="counter-container">
+                    <div id="blink-counter" class="counter-box">Blinks: 0</div>
+                    <div id="yawn-counter" class="counter-box">Yawns: 0</div>
+                </div>
+
+                <video id="video" playsinline autoplay muted></video>
+                <canvas id="canvas"></canvas>
+            </div>
+
+            <div id="status" class="mt-4 p-3 bg-gray-700 rounded-lg shadow-xl text-sm">
+                Initializing...
+            </div>
+        </div>
+
+        <!-- Info Panel (20%) - Collapsible -->
+        <div class="info-panel lg:w-56 w-full">
+            <button id="info-toggle" class="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg p-2 text-xs text-gray-400 flex items-center justify-between lg:hidden">
+                <span>How it works</span>
+                <span id="toggle-icon">+</span>
+            </button>
+            <div id="info-content" class="hidden lg:block bg-gray-800 rounded-lg p-3 text-xs leading-relaxed border border-gray-700 mt-2 lg:mt-0">
+                <h2 class="text-blue-400 font-bold mb-2 hidden lg:block">How it works</h2>
+                <div class="text-gray-300 space-y-2">
+                    <p><a href="https://github.com/google-ai-edge/mediapipe/wiki/MediaPipe-Face-Mesh" target="_blank" class="text-blue-400 hover:underline">MediaPipe FaceMesh</a> detects 468 facial landmarks in real-time.</p>
+
+                    <div class="border-t border-gray-600 pt-2">
+                        <p class="text-gray-400 mb-1">Detection:</p>
+                        <p><span class="text-blue-300">Blink:</span> <a href="https://en.wikipedia.org/wiki/Eye_aspect_ratio" target="_blank" class="text-gray-400 hover:underline">EAR</a> &lt; 0.25</p>
+                        <p><span class="text-green-300">Yawn:</span> MAR &gt; 0.7 (5+ frames)</p>
+                    </div>
+
+                    <div class="border-t border-gray-600 pt-2 text-gray-500">
+                        <span class="text-red-400">Red</span>=eyes
+                        <span class="text-green-400">Green</span>=mouth
+                    </div>
+
+                    <div class="border-t border-gray-600 pt-2 text-gray-500">
+                        <p class="mb-1">Stack:</p>
+                        <p><a href="https://www.tensorflow.org/js" target="_blank" class="hover:underline">TensorFlow.js</a> + <a href="https://developers.google.com/mediapipe" target="_blank" class="hover:underline">MediaPipe</a></p>
+                    </div>
+
+                    <p class="text-gray-500 italic">All local. No data sent.</p>
+                </div>
+            </div>
+        </div>
     </div>
-
-    <div id="counter-box">
-        <div id="status">Status: **Loading TensorFlow.js models...**</div>
-        <div id="counter">Blinks: **0**</div>
-    </div>
-
-    <!-- TensorFlow.js Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.14.0/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.1/dist/face-landmarks-detection.min.js"></script>
 
     <script>
+        // Toggle info panel on mobile
+        document.getElementById('info-toggle').addEventListener('click', function() {
+            const content = document.getElementById('info-content');
+            const icon = document.getElementById('toggle-icon');
+            content.classList.toggle('hidden');
+            icon.textContent = content.classList.contains('hidden') ? '+' : '-';
+        });
+    </script>
+
+    <script>
+        // Global variables
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
-        const statusElement = document.getElementById('status');
-        const counterElement = document.getElementById('counter');
         const ctx = canvas.getContext('2d');
+        const statusElement = document.getElementById('status');
+        const blinkCounterElement = document.getElementById('blink-counter');
+        const yawnCounterElement = document.getElementById('yawn-counter');
 
         let detector;
-        let blinks = 0;
+        let animationFrameId;
 
-        // --- Blink Parameters ---
-        const EAR_THRESHOLD = 0.23;
-        const CONSECUTIVE_FRAMES = 2;
-        let frame_counter = 0;
+        // --- BLINK DETECTION STATE & CONFIG ---
+        let blinkCount = 0;
+        let isBlinkActive = false;
+        const EAR_THRESHOLD = 0.25; // Eye Aspect Ratio threshold for eye closure
 
-        // --- MediaPipe Eye Landmark Indices for EAR (Ordered for drawing outline) ---
-        const LEFT_EYE_INDICES = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
-        const RIGHT_EYE_INDICES = [362, 382, 381, 380, 374, 390, 249, 399, 389, 378, 384, 385, 386, 387, 388, 466];
-        // For EAR calculation, we only need a few: [inner_corner, top_mid, top_outer, outer_corner, bottom_outer, bottom_mid]
-        const LEFT_EAR_POINTS = [33, 160, 158, 133, 153, 144];
-        const RIGHT_EAR_POINTS = [362, 385, 387, 263, 373, 380];
+        // --- YAWN DETECTION STATE & CONFIG ---
+        let yawnCount = 0;
+        let isYawnActive = false;
+        let yawnFrames = 0; // Counter for consecutive open frames
+        const YAWN_FRAME_THRESHOLD = 5; // Must be open for 5 frames to count as a yawn
+        const MAR_THRESHOLD = 0.7; // Mouth Aspect Ratio threshold for wide mouth opening (increased from 0.6)
+
+        // Landmark indices for EAR (Eye Aspect Ratio) calculation
+        // Left Eye (on the screen, right eye on face)
+        const LEFT_EYE_EAR_INDICES = [362, 385, 387, 263, 373, 380];
+        // Right Eye (on the screen, left eye on face)
+        const RIGHT_EYE_EAR_INDICES = [33, 160, 158, 133, 144, 145];
+
+        // Landmark indices for MAR (Mouth Aspect Ratio) calculation
+        // Key points used: Top lip center (13), Bottom lip center (14), Left corner (61), Right corner (291)
+        const MOUTH_MAR_INDICES = [13, 14, 61, 291];
+
+        // Configuration constants
+        const MODEL_URL = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
+        // The solutionPath is crucial for the MediaPipe runtime
+        const DETECTOR_CONFIG = {
+            runtime: 'mediapipe', // Use the faster MediaPipe backend
+            solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh',
+            maxFaces: 1, // Detects a single face for simplicity
+            refineLandmarks: true // Use the Attention Mesh for higher fidelity around eyes and lips
+        };
+        const MAX_RETRIES = 5;
+        const INITIAL_DELAY_MS = 1000;
 
 
-        // --- Utility Functions ---
-
-        /** Calculates distance between two points (x, y). */
-        function dist(p1, p2) {
+        /**
+         * Calculates the Euclidean distance between two points (p1 and p2).
+         * @param {{x: number, y: number}} p1 - First point.
+         * @param {{x: number, y: number}} p2 - Second point.
+         * @returns {number} The distance.
+         */
+        function distance(p1, p2) {
             return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
         }
 
-        /** Calculates the Eye Aspect Ratio (EAR) for blink detection. */
-        function eyeAspect(eyePoints) {
-            // eyePoints must be in the order: [P1, P2, P3, P4, P5, P6]
-            const A = dist(eyePoints[1], eyePoints[5]); // Vertical distance (P2-P6)
-            const B = dist(eyePoints[2], eyePoints[4]); // Vertical distance (P3-P5)
-            const C = dist(eyePoints[0], eyePoints[3]); // Horizontal distance (P1-P4)
+        /**
+         * Calculates the Eye Aspect Ratio (EAR) for a given set of 6 eye keypoints.
+         * EAR = (|p2 - p6| + |p3 - p5|) / (2 * |p1 - p4|)
+         * p1, p4 are horizontal (corners); p2, p3, p5, p6 are vertical.
+         * * @param {Array<Object>} keypoints - All 478 keypoints.
+         * @param {Array<number>} indices - Array of 6 indices [p1, p2, p3, p4, p5, p6].
+         * @returns {number} The Eye Aspect Ratio.
+         */
+        function calculateEAR(keypoints, indices) {
+            if (keypoints.length === 0) return 0;
+
+            const p1 = keypoints[indices[0]]; // Outer horizontal corner
+            const p2 = keypoints[indices[1]]; // Vertical top-left
+            const p3 = keypoints[indices[2]]; // Vertical bottom-left
+            const p4 = keypoints[indices[3]]; // Inner horizontal corner
+            const p5 = keypoints[indices[4]]; // Vertical top-right
+            const p6 = keypoints[indices[5]]; // Vertical bottom-right
+
+            // Calculate the three distances
+            const A = distance(p2, p6); // Distance between vertical points 1
+            const B = distance(p3, p5); // Distance between vertical points 2
+            const C = distance(p1, p4); // Distance between horizontal points
+
+            // Eye Aspect Ratio formula
             return (A + B) / (2.0 * C);
         }
 
-        /** Draws a connected outline for a set of eye landmarks. */
-        function drawEyeOutline(landmarks, indices, color) {
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
+        /**
+         * Calculates the Mouth Aspect Ratio (MAR) for a given set of mouth keypoints.
+         * MAR = Vertical Distance / Horizontal Distance
+         * @param {Array<Object>} keypoints - All 478 keypoints.
+         * @returns {number} The Mouth Aspect Ratio.
+         */
+        function calculateMAR(keypoints) {
+            if (keypoints.length === 0) return 0;
 
-            // Move to the first point
-            let firstPoint = landmarks[indices[0]];
-            ctx.moveTo(firstPoint[0], firstPoint[1]);
+            // Standard MAR calculation points:
+            // P_top (13): Top center lip
+            // P_bottom (14): Bottom center lip
+            // P_left (61): Left corner
+            // P_right (291): Right corner
 
-            // Draw lines to subsequent points
-            for (let i = 1; i < indices.length; i++) {
-                let nextPoint = landmarks[indices[i]];
-                ctx.lineTo(nextPoint[0], nextPoint[1]);
-            }
+            const p_top = keypoints[13];
+            const p_bottom = keypoints[14];
+            const p_left = keypoints[61];
+            // Use 291 if available, otherwise 16 as a fall-back for the right corner
+            const p_right = keypoints[291] || keypoints[16];
 
-            // Close the path to connect the last point to the first
-            ctx.closePath();
-            ctx.stroke();
+            if (!p_top || !p_bottom || !p_left || !p_right) return 0;
+
+            // Vertical distance (openness)
+            const V = distance(p_top, p_bottom);
+            // Horizontal distance (width)
+            const H = distance(p_left, p_right);
+
+            // Mouth Aspect Ratio (Vertical/Horizontal)
+            return V / H;
         }
 
-        // --- Main Detection Loop ---
-        async function detectBlink() {
-            // CRITICAL FIX: Ensures the video element is ready for TF.js to read pixels.
-            // videoWidth/videoHeight must be greater than 0, and readyState must be HAVE_ENOUGH_DATA (4) or HAVE_FUTURE_DATA (3).
-            if (!video.videoWidth || !video.videoHeight || video.readyState < 3) {
-                requestAnimationFrame(detectBlink);
+        /**
+         * Initializes the webcam stream.
+         */
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    'audio': false,
+                    'video': {
+                        facingMode: 'user' // Use the front camera
+                    }
+                });
+
+                video.srcObject = stream;
+
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        // Set canvas size to match video size after metadata is loaded
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+
+                        video.play();
+                        resolve(video);
+                    };
+                });
+            } catch (error) {
+                statusElement.textContent = `Error accessing webcam: ${error.message}. Please allow camera access.`;
+                console.error("Error setting up camera:", error);
+                return null;
+            }
+        }
+
+        /**
+         * Loads the Face Mesh model using exponential backoff retry logic.
+         */
+        async function loadModel(retryCount = 0) {
+            statusElement.textContent = `Loading Face Mesh model (Attempt ${retryCount + 1}/${MAX_RETRIES})...`;
+
+            try {
+                // This factory function is the correct way to initialize the detector.
+                detector = await faceLandmarksDetection.createDetector(
+                    MODEL_URL,
+                    DETECTOR_CONFIG
+                );
+                statusElement.textContent = "Model successfully loaded. Starting detection...";
+                return true;
+            } catch (error) {
+                console.error(`Model loading attempt ${retryCount + 1} failed:`, error);
+
+                if (retryCount < MAX_RETRIES - 1) {
+                    const delay = INITIAL_DELAY_MS * Math.pow(2, retryCount);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return loadModel(retryCount + 1); // Retry recursively
+                } else {
+                    statusElement.textContent = "Model loading failed permanently after multiple retries. Check console for details.";
+                    return false;
+                }
+            }
+        }
+
+        /**
+         * The main prediction loop.
+         */
+        async function renderPrediction() {
+            if (!detector || video.readyState !== 4) {
+                animationFrameId = requestAnimationFrame(renderPrediction);
                 return;
             }
 
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            // Estimate faces (landmarks) from the video frame
+            const faces = await detector.estimateFaces(video, {
+                flipHorizontal: false // Already flipped via CSS/canvas
+            });
 
-            // 1. Prepare Canvas Context (Flip for Mirror Effect)
+            // Draw the video frame onto the canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // The canvas context needs to be flipped to match the video element's CSS flip
             ctx.save();
             ctx.scale(-1, 1);
             ctx.translate(-canvas.width, 0);
-
-            // 2. Predict facial landmarks
-            // We pass the raw HTMLVideoElement here.
-            const predictions = await detector.estimateFaces({
-                input: video,
-                flipHorizontal: false
-            });
-
-            if (predictions.length > 0) {
-                const face = predictions[0];
-                const landmarks = face.scaledMesh; // [x, y, z] coordinates
-
-                // --- DRAWING OUTLINES ---
-                drawEyeOutline(landmarks, LEFT_EYE_INDICES, '#f97316'); // Orange outline
-                drawEyeOutline(landmarks, RIGHT_EYE_INDICES, '#10b981'); // Green outline
-
-                // 3. Eye Aspect Ratio (EAR) Calculation
-                // Select only the 6 specific points needed for the calculation
-                const leftEarPoints = LEFT_EAR_POINTS.map(i => ({x: landmarks[i][0], y: landmarks[i][1]}));
-                const rightEarPoints = RIGHT_EAR_POINTS.map(i => ({x: landmarks[i][0], y: landmarks[i][1]}));
-
-                const ear_left = eyeAspect(leftEarPoints);
-                const ear_right = eyeAspect(rightEarPoints);
-                const avg_ear = (ear_left + ear_right) / 2.0;
-
-                // 4. Blink Detection Logic
-                if (avg_ear < EAR_THRESHOLD) {
-                    frame_counter += 1;
-                } else {
-                    if (frame_counter >= CONSECUTIVE_FRAMES) {
-                        blinks += 1;
-                        counterElement.innerHTML = `Blinks: **${blinks}**`;
-                    }
-                    frame_counter = 0;
-                }
-
-                statusElement.innerHTML = `Status: **Tracking active (EAR: ${avg_ear.toFixed(2)})**`;
-
-            } else {
-                statusElement.innerHTML = `Status: **No face detected.**`;
-            }
-
-            // 5. Restore Canvas Context
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             ctx.restore();
 
-            // Loop
-            requestAnimationFrame(detectBlink);
+
+            if (faces && faces.length > 0) {
+                const keypoints = faces[0].keypoints;
+
+                // Draw all the face landmarks
+                drawFaceMesh(keypoints);
+
+                // ----------------------------------------------------
+                // BLINK DETECTION LOGIC
+                // ----------------------------------------------------
+                const leftEar = calculateEAR(keypoints, RIGHT_EYE_EAR_INDICES);
+                const rightEar = calculateEAR(keypoints, LEFT_EYE_EAR_INDICES);
+                const ear = (leftEar + rightEar) / 2.0;
+
+                // Check for blink state transition
+                if (ear < EAR_THRESHOLD) {
+                    isBlinkActive = true;
+                } else if (ear >= EAR_THRESHOLD && isBlinkActive) {
+                    blinkCount++;
+                    blinkCounterElement.textContent = `Blinks: ${blinkCount}`;
+                    isBlinkActive = false;
+                }
+
+                // ----------------------------------------------------
+                // YAWN DETECTION LOGIC (IMPROVED)
+                // ----------------------------------------------------
+                const mar = calculateMAR(keypoints);
+
+                if (mar > MAR_THRESHOLD) {
+                    // Mouth is wide open (potential yawn)
+                    yawnFrames++;
+                    if (yawnFrames >= YAWN_FRAME_THRESHOLD && !isYawnActive) {
+                        // Yawn condition met (sustained wide opening)
+                        isYawnActive = true;
+                        yawnCount++;
+                        yawnCounterElement.textContent = `Yawns: ${yawnCount}`;
+                    }
+                } else {
+                    // Mouth is closed or only slightly open
+                    yawnFrames = 0; // Reset frame counter
+                    if (isYawnActive) {
+                        // The mouth just closed after a detected yawn
+                        isYawnActive = false;
+                    }
+                }
+
+                // Optional: Display EAR/MAR value for debugging/tuning
+                // statusElement.textContent = `EAR: ${ear.toFixed(2)} | MAR: ${mar.toFixed(2)} | Yawn Frames: ${yawnFrames}`;
+
+            } else {
+                 statusElement.textContent = "No face detected.";
+            }
+
+            // Loop the prediction
+            animationFrameId = requestAnimationFrame(renderPrediction);
         }
 
-        // --- Initialization ---
-        async function main() {
-            // 1. Load the Model
-            const detectorConfig = {
-                runtime: 'tfjs',
-                solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619',
-                maxFaces: 1
-            };
+        /**
+         * Draws the face mesh keypoints on the canvas.
+         * @param {Array<Object>} keypoints - Array of keypoint objects.
+         */
+        function drawFaceMesh(keypoints) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; // White dots
+            ctx.strokeStyle = '#3b82f6'; // Blue lines
 
-            try {
-                 detector = await faceLandmarksDetection.createDetector(
-                    faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-                    detectorConfig
-                );
-                statusElement.innerHTML = 'Status: **Model loaded. Starting video stream...**';
-            } catch (e) {
-                console.error("Model loading failed:", e);
-                statusElement.innerHTML = 'Status: **ERROR: Model failed to load.** Check console.';
-                return;
-            }
+            // 1. Draw all points
+            keypoints.forEach(keypoint => {
+                ctx.beginPath();
+                // keypoint coordinates are already relative to the image size
+                ctx.arc(keypoint.x, keypoint.y, 1.5, 0, 2 * Math.PI); // Draw small dot
+                ctx.fill();
+            });
 
-            // 2. Start Video Stream (Camera Access Request)
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                video.srcObject = stream;
-            } catch (err) {
-                statusElement.innerHTML = 'Status: **ERROR: Cannot access webcam.** Please allow access and reload.';
-                console.error("Webcam access error:", err);
-                return;
-            }
+            // Optional: Highlight the 6 key points used for EAR calculation
+            const earIndices = [...LEFT_EYE_EAR_INDICES, ...RIGHT_EYE_EAR_INDICES];
+            ctx.fillStyle = '#ff0000'; // Red for the EAR points
+            earIndices.forEach(index => {
+                const keypoint = keypoints[index];
+                if (keypoint) {
+                    ctx.beginPath();
+                    ctx.arc(keypoint.x, keypoint.y, 3, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            });
 
-            // 3. Wait for video to load and then start detection
-            // We use 'loadedmetadata' to ensure stream properties are ready
-            video.addEventListener('loadedmetadata', () => {
-                video.play();
-                statusElement.innerHTML = 'Status: **Face tracking active.**';
-                // Start the main loop only after video is playing
-                detectBlink();
+            // Optional: Highlight the 4 key points used for MAR calculation (13, 14, 61, 291)
+            const marIndices = [13, 14, 61, 291];
+            ctx.fillStyle = '#00ff00'; // Green for the MAR points
+            marIndices.forEach(index => {
+                const keypoint = keypoints[index];
+                if (keypoint) {
+                    ctx.beginPath();
+                    ctx.arc(keypoint.x, keypoint.y, 3, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
             });
         }
 
-        main();
+        /**
+         * Main function to start the application.
+         */
+        async function app() {
+            const cameraVideo = await setupCamera();
+            if (!cameraVideo) {
+                return;
+            }
+
+            const modelLoaded = await loadModel();
+
+            if (modelLoaded) {
+                renderPrediction();
+            }
+        }
+
+        window.onload = app;
     </script>
 </body>
 </html>

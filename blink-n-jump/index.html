@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blink & Jump - Dino Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- TensorFlow.js and MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.1/dist/face-landmarks-detection.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        #webcam-container {
+            position: relative;
+            width: 200px;
+            height: 150px;
+            border: 2px solid #3b82f6;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        #video, #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        #game-canvas {
+            border: 2px solid #374151;
+            border-radius: 0.5rem;
+            background: #1f2937;
+        }
+        .blink-indicator {
+            transition: all 0.1s ease;
+        }
+        .blink-indicator.active {
+            background-color: #22c55e !important;
+            transform: scale(1.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4"><style id="project-nav-style">.project-nav{font-family:"SF Mono","Monaco","Menlo",monospace;background:#1a1a2e;padding:0.5rem 1rem;font-size:0.9rem;}.project-nav a{color:#00d9ff;text-decoration:none;}.project-nav a:hover{text-decoration:underline;}.project-nav .sep{color:#666;}</style><nav class="project-nav"><a href="../index.html">~/projects</a><span class="sep">/</span><span>blink-n-jump</span></nav>
+
+    <h1 class="text-3xl font-extrabold mb-2 text-blue-400">Blink & Jump</h1>
+    <p class="text-gray-400 text-sm mb-4">blink to make the dino jump! don't worry, i am not collecting/using any your data!!</p>
+    <div class="flex flex-col lg:flex-row gap-6 items-start justify-center">
+        <!-- Game Area -->
+        <div class="flex flex-col items-center">
+            <canvas id="game-canvas" width="800" height="300"></canvas>
+
+            <div class="flex gap-4 mt-4 flex-wrap justify-center">
+                <div class="bg-gray-800 rounded-lg px-4 py-2 text-center">
+                    <div class="text-gray-400 text-xs">Score</div>
+                    <div id="score" class="text-2xl font-bold text-green-400">0</div>
+                </div>
+                <div class="bg-gray-800 rounded-lg px-4 py-2 text-center">
+                    <div class="text-gray-400 text-xs">High Score</div>
+                    <div id="high-score" class="text-2xl font-bold text-yellow-400">0</div>
+                </div>
+                <div id="blink-box" class="blink-indicator bg-gray-800 rounded-lg px-4 py-2 text-center">
+                    <div class="text-gray-400 text-xs">Blink</div>
+                    <div class="text-2xl">👁️</div>
+                </div>
+                <div class="bg-gray-800 rounded-lg px-4 py-2 text-center">
+                    <div class="text-gray-400 text-xs">Mode</div>
+                    <div id="mode-display" class="text-sm font-bold text-blue-400">Normal</div>
+                </div>
+            </div>
+
+            <div class="flex gap-2 mt-3">
+                <button id="btn-normal" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition">Slow</button>
+                <button id="btn-hard" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-sm font-medium transition">Hard</button>
+                <button id="btn-eyecare" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-sm font-medium transition">Eye Care</button>
+            </div>
+
+            <div id="status" class="mt-4 p-2 bg-gray-700 rounded-lg text-sm text-center">
+                Loading face detection...
+            </div>
+        </div>
+
+        <!-- Webcam + Info Panel -->
+        <div class="flex flex-col gap-4">
+            <div id="webcam-container">
+                <video id="video" playsinline autoplay muted></video>
+                <canvas id="overlay"></canvas>
+            </div>
+
+            <div class="bg-gray-800 rounded-lg p-3 text-xs leading-relaxed border border-gray-700 max-w-[200px]">
+                <h2 class="text-blue-400 font-bold mb-2">How to play</h2>
+                <div class="text-gray-300 space-y-1">
+                    <p><span class="text-green-400">Blink</span> to jump</p>
+                    <p>Avoid the cacti</p>
+                    <p>Catch 💚 for extra life!</p>
+                </div>
+                <div class="border-t border-gray-600 pt-2 mt-2">
+                    <p class="text-gray-400 mb-1">Modes:</p>
+                    <p><span class="text-green-400">Slow</span> - balanced</p>
+                    <p><span class="text-red-400">Hard</span> - fast</p>
+                    <p><span class="text-cyan-400">Eye Care</span> - 15 blinks/min</p>
+                </div>
+                <div class="border-t border-gray-600 pt-2 mt-2 text-gray-500">
+                    <p class="mb-1">Eye Care trains healthy blink rate. <a href="https://www.healthline.com/health/how-many-times-do-you-blink-a-day" target="_blank" class="text-cyan-400 hover:underline">Research</a> shows we blink 15-20x/min normally but only 5x/min on screens!</p>
+                </div>
+                <div class="border-t border-gray-600 pt-2 mt-2 text-gray-500">
+                    <p>Uses <a href="https://github.com/google-ai-edge/mediapipe/wiki/MediaPipe-Face-Mesh" target="_blank" class="text-blue-400 hover:underline">FaceMesh</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // FACE DETECTION (from blink-n-yawn)
+        // ============================================
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const overlayCtx = overlay.getContext('2d');
+        const statusElement = document.getElementById('status');
+        const blinkBox = document.getElementById('blink-box');
+
+        let detector;
+        let isBlinkActive = false;
+        let blinkDetected = false; // Flag for game to consume
+
+        // Double blink detection for restart
+        let lastBlinkTime = 0;
+        let doubleBlink = false;
+        const DOUBLE_BLINK_THRESHOLD = 500; // ms between blinks to count as double
+
+        const EAR_THRESHOLD = 0.25;
+        const LEFT_EYE_EAR_INDICES = [362, 385, 387, 263, 373, 380];
+        const RIGHT_EYE_EAR_INDICES = [33, 160, 158, 133, 144, 145];
+
+        const MODEL_URL = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
+        const DETECTOR_CONFIG = {
+            runtime: 'mediapipe',
+            solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh',
+            maxFaces: 1,
+            refineLandmarks: true
+        };
+
+        function distance(p1, p2) {
+            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+        }
+
+        function calculateEAR(keypoints, indices) {
+            if (keypoints.length === 0) return 1;
+            const p1 = keypoints[indices[0]];
+            const p2 = keypoints[indices[1]];
+            const p3 = keypoints[indices[2]];
+            const p4 = keypoints[indices[3]];
+            const p5 = keypoints[indices[4]];
+            const p6 = keypoints[indices[5]];
+            const A = distance(p2, p6);
+            const B = distance(p3, p5);
+            const C = distance(p1, p4);
+            return (A + B) / (2.0 * C);
+        }
+
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: { facingMode: 'user', width: 320, height: 240 }
+                });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        overlay.width = video.videoWidth;
+                        overlay.height = video.videoHeight;
+                        video.play();
+                        resolve(video);
+                    };
+                });
+            } catch (error) {
+                statusElement.textContent = `Camera error: ${error.message}`;
+                return null;
+            }
+        }
+
+        async function loadModel(retryCount = 0) {
+            statusElement.textContent = `Loading model (${retryCount + 1}/5)...`;
+            try {
+                detector = await faceLandmarksDetection.createDetector(MODEL_URL, DETECTOR_CONFIG);
+                statusElement.textContent = "Ready! Blink to jump!";
+                return true;
+            } catch (error) {
+                if (retryCount < 4) {
+                    await new Promise(r => setTimeout(r, 1000 * Math.pow(2, retryCount)));
+                    return loadModel(retryCount + 1);
+                }
+                statusElement.textContent = "Model failed to load.";
+                return false;
+            }
+        }
+
+        async function detectFace() {
+            if (!detector || video.readyState !== 4) {
+                requestAnimationFrame(detectFace);
+                return;
+            }
+
+            const faces = await detector.estimateFaces(video, { flipHorizontal: false });
+
+            overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+            overlayCtx.save();
+            overlayCtx.scale(-1, 1);
+            overlayCtx.translate(-overlay.width, 0);
+            overlayCtx.drawImage(video, 0, 0);
+            overlayCtx.restore();
+
+            if (faces && faces.length > 0) {
+                const keypoints = faces[0].keypoints;
+                const leftEar = calculateEAR(keypoints, RIGHT_EYE_EAR_INDICES);
+                const rightEar = calculateEAR(keypoints, LEFT_EYE_EAR_INDICES);
+                const ear = (leftEar + rightEar) / 2.0;
+
+                if (ear < EAR_THRESHOLD) {
+                    if (!isBlinkActive) {
+                        const now = Date.now();
+                        // Check for double blink
+                        if (now - lastBlinkTime < DOUBLE_BLINK_THRESHOLD) {
+                            doubleBlink = true;
+                        }
+                        lastBlinkTime = now;
+                        blinkDetected = true; // Signal to game
+                        blinkBox.classList.add('active');
+                    }
+                    isBlinkActive = true;
+                } else {
+                    isBlinkActive = false;
+                    blinkBox.classList.remove('active');
+                }
+
+                // Draw eye points
+                const earIndices = [...LEFT_EYE_EAR_INDICES, ...RIGHT_EYE_EAR_INDICES];
+                overlayCtx.fillStyle = '#00ff00';
+                earIndices.forEach(idx => {
+                    const p = keypoints[idx];
+                    if (p) {
+                        overlayCtx.beginPath();
+                        overlayCtx.arc(p.x, p.y, 2, 0, 2 * Math.PI);
+                        overlayCtx.fill();
+                    }
+                });
+            }
+
+            requestAnimationFrame(detectFace);
+        }
+
+        // ============================================
+        // DINO GAME
+        // ============================================
+        const gameCanvas = document.getElementById('game-canvas');
+        const ctx = gameCanvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('high-score');
+        const modeDisplay = document.getElementById('mode-display');
+        const btnNormal = document.getElementById('btn-normal');
+        const btnHard = document.getElementById('btn-hard');
+        const btnEyecare = document.getElementById('btn-eyecare');
+
+        const GROUND_Y = 250;
+        const GRAVITY = 0.8;
+        const JUMP_FORCE = -15;
+
+        // Game modes
+        // Research: Normal blink rate is 15-20/min, but drops to 5/min on screens
+        // Optimal blink interval: ~3-4 seconds (15-20 blinks/min)
+        // Blink duration: 100-400ms average
+        const MODES = {
+            normal: {
+                name: 'Slow',
+                startSpeed: 4,
+                maxSpeed: 9,
+                speedIncrement: 0.25,
+                obstacleInterval: 160,
+                minObstacleInterval: 70,
+                speedUpInterval: 500
+            },
+            hard: {
+                name: 'Hard',
+                startSpeed: 5,
+                maxSpeed: 12,
+                speedIncrement: 0.5,
+                obstacleInterval: 120,
+                minObstacleInterval: 50,
+                speedUpInterval: 500
+            },
+            eyecare: {
+                name: 'Eye Care',
+                // Designed for 15 blinks/min = 1 blink every 4 seconds
+                // At 60fps, 4 seconds = 240 frames between obstacles
+                // Speed tuned so obstacle takes ~1 sec to cross jump zone
+                startSpeed: 3.5,
+                maxSpeed: 4.5,      // Stays comfortable
+                speedIncrement: 0.1,
+                obstacleInterval: 240,  // ~4 seconds gap (15 blinks/min)
+                minObstacleInterval: 200,
+                speedUpInterval: 1000,  // Very slow progression
+                description: 'Trains healthy blink rate (15/min)'
+            }
+        };
+
+        let currentMode = 'normal';
+        let gameRunning = false;
+        let gameStarted = false;
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('blinkJumpHighScore_normal') || '0');
+        highScoreEl.textContent = highScore;
+
+        // Dino
+        const dino = {
+            x: 80,
+            y: GROUND_Y,
+            width: 40,
+            height: 50,
+            velocityY: 0,
+            isJumping: false,
+
+            jump() {
+                if (!this.isJumping) {
+                    this.velocityY = JUMP_FORCE;
+                    this.isJumping = true;
+                }
+            },
+
+            update() {
+                this.velocityY += GRAVITY;
+                this.y += this.velocityY;
+
+                if (this.y >= GROUND_Y) {
+                    this.y = GROUND_Y;
+                    this.velocityY = 0;
+                    this.isJumping = false;
+                }
+            },
+
+            draw() {
+                // Body
+                ctx.fillStyle = '#22c55e';
+                ctx.fillRect(this.x, this.y - this.height, this.width, this.height);
+
+                // Eye
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(this.x + 30, this.y - 40, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(this.x + 32, this.y - 40, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Legs
+                ctx.fillStyle = '#22c55e';
+                if (this.isJumping) {
+                    ctx.fillRect(this.x + 5, this.y, 10, 15);
+                    ctx.fillRect(this.x + 25, this.y, 10, 15);
+                } else {
+                    const legOffset = Math.floor(Date.now() / 100) % 2 === 0 ? 0 : 5;
+                    ctx.fillRect(this.x + 5, this.y, 10, 15 + legOffset);
+                    ctx.fillRect(this.x + 25, this.y, 10, 15 - legOffset);
+                }
+            }
+        };
+
+        // Obstacles
+        let obstacles = [];
+        let obstacleTimer = 0;
+        let gameSpeed = 5;
+
+        // Power-ups (flying hearts for extra life)
+        let powerups = [];
+        let powerupTimer = 0;
+        let lives = 0;
+        const MAX_LIVES = 3;
+
+        function spawnObstacle() {
+            const height = 30 + Math.random() * 30;
+            obstacles.push({
+                x: gameCanvas.width,
+                y: GROUND_Y - height,
+                width: 20 + Math.random() * 15,
+                height: height
+            });
+        }
+
+        function updateObstacles() {
+            const mode = MODES[currentMode];
+            obstacleTimer++;
+            // Adjust spawn rate based on mode and current speed
+            // Slower speed reduction so gaps stay comfortable
+            const spawnThreshold = mode.obstacleInterval - gameSpeed * 3;
+            if (obstacleTimer > Math.max(spawnThreshold, mode.minObstacleInterval)) {
+                spawnObstacle();
+                obstacleTimer = 0;
+            }
+
+            obstacles.forEach(obs => {
+                obs.x -= gameSpeed;
+            });
+
+            obstacles = obstacles.filter(obs => obs.x + obs.width > 0);
+        }
+
+        // Power-up functions
+        function spawnPowerup() {
+            // Random height in the jump zone
+            const y = GROUND_Y - 80 - Math.random() * 60;
+            powerups.push({
+                x: gameCanvas.width,
+                y: y,
+                width: 30,
+                height: 30,
+                floatOffset: 0
+            });
+        }
+
+        function updatePowerups() {
+            powerupTimer++;
+            // Spawn powerup randomly (roughly every 8-15 seconds)
+            if (powerupTimer > 500 + Math.random() * 400) {
+                if (lives < MAX_LIVES) { // Only spawn if not at max lives
+                    spawnPowerup();
+                }
+                powerupTimer = 0;
+            }
+
+            powerups.forEach(p => {
+                p.x -= gameSpeed;
+                // Floating animation
+                p.floatOffset = Math.sin(Date.now() / 200) * 5;
+            });
+
+            powerups = powerups.filter(p => p.x + p.width > 0);
+        }
+
+        function drawPowerups() {
+            powerups.forEach(p => {
+                const drawY = p.y + p.floatOffset;
+
+                // Green heart emoji
+                ctx.font = '28px sans-serif';
+                ctx.fillText('💚', p.x, drawY + 22);
+            });
+        }
+
+        function checkPowerupCollision() {
+            const dinoBox = {
+                x: dino.x + 5,
+                y: dino.y - dino.height + 5,
+                width: dino.width - 10,
+                height: dino.height - 10
+            };
+
+            for (let i = powerups.length - 1; i >= 0; i--) {
+                const p = powerups[i];
+                if (
+                    dinoBox.x < p.x + p.width &&
+                    dinoBox.x + dinoBox.width > p.x &&
+                    dinoBox.y < p.y + p.height &&
+                    dinoBox.y + dinoBox.height > p.y
+                ) {
+                    // Collected!
+                    powerups.splice(i, 1);
+                    if (lives < MAX_LIVES) {
+                        lives++;
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function drawObstacles() {
+            ctx.fillStyle = '#ef4444';
+            obstacles.forEach(obs => {
+                // Cactus body
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                // Cactus arms
+                ctx.fillRect(obs.x - 5, obs.y + 10, 8, 15);
+                ctx.fillRect(obs.x + obs.width - 3, obs.y + 15, 8, 12);
+            });
+        }
+
+        function checkCollision() {
+            const dinoBox = {
+                x: dino.x + 5,
+                y: dino.y - dino.height + 5,
+                width: dino.width - 10,
+                height: dino.height - 10
+            };
+
+            for (const obs of obstacles) {
+                if (
+                    dinoBox.x < obs.x + obs.width &&
+                    dinoBox.x + dinoBox.width > obs.x &&
+                    dinoBox.y < obs.y + obs.height &&
+                    dinoBox.y + dinoBox.height > obs.y
+                ) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            const modeConfig = MODES[mode];
+            modeDisplay.textContent = modeConfig.name;
+
+            // Update button styles
+            const baseClass = 'px-4 py-2 rounded-lg text-sm font-medium transition';
+            btnNormal.className = mode === 'normal'
+                ? `${baseClass} bg-green-600 hover:bg-green-700`
+                : `${baseClass} bg-gray-600 hover:bg-gray-700`;
+            btnHard.className = mode === 'hard'
+                ? `${baseClass} bg-red-600 hover:bg-red-700`
+                : `${baseClass} bg-gray-600 hover:bg-gray-700`;
+            btnEyecare.className = mode === 'eyecare'
+                ? `${baseClass} bg-cyan-600 hover:bg-cyan-700`
+                : `${baseClass} bg-gray-600 hover:bg-gray-700`;
+
+            // Load high score for this mode
+            highScore = parseInt(localStorage.getItem(`blinkJumpHighScore_${mode}`) || '0');
+            highScoreEl.textContent = highScore;
+
+            // Reset game with new mode
+            resetGame();
+        }
+
+        function resetGame() {
+            const mode = MODES[currentMode];
+            obstacles = [];
+            obstacleTimer = 0;
+            powerups = [];
+            powerupTimer = 0;
+            lives = 0;
+            gameSpeed = mode.startSpeed;
+            score = 0;
+            dino.y = GROUND_Y;
+            dino.velocityY = 0;
+            dino.isJumping = false;
+            gameRunning = true;
+            gameStarted = true;
+        }
+
+        function gameLoop() {
+            // Clear
+            ctx.fillStyle = '#1f2937';
+            ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+            // Ground
+            ctx.fillStyle = '#374151';
+            ctx.fillRect(0, GROUND_Y, gameCanvas.width, 50);
+
+            // Ground texture
+            ctx.fillStyle = '#4b5563';
+            for (let i = 0; i < gameCanvas.width; i += 20) {
+                ctx.fillRect(i + (Date.now() / 50 * gameSpeed) % 20, GROUND_Y + 5, 10, 2);
+            }
+
+            if (gameRunning) {
+                // Check for blink jump
+                if (blinkDetected) {
+                    dino.jump();
+                    blinkDetected = false;
+                }
+
+                dino.update();
+                updateObstacles();
+                updatePowerups();
+                checkPowerupCollision();
+
+                // Increase speed and score
+                const mode = MODES[currentMode];
+                score++;
+                if (score % mode.speedUpInterval === 0 && gameSpeed < mode.maxSpeed) {
+                    gameSpeed += mode.speedIncrement;
+                }
+                scoreEl.textContent = Math.floor(score / 10);
+
+                if (checkCollision()) {
+                    if (lives > 0) {
+                        // Use a life instead of dying
+                        lives--;
+                        // Remove the obstacle that hit us
+                        obstacles.shift();
+                    } else {
+                        gameRunning = false;
+                        if (score > highScore) {
+                            highScore = score;
+                            localStorage.setItem(`blinkJumpHighScore_${currentMode}`, highScore.toString());
+                            highScoreEl.textContent = Math.floor(highScore / 10);
+                        }
+                    }
+                }
+
+                // Draw lives indicator
+                ctx.font = '20px sans-serif';
+                for (let i = 0; i < lives; i++) {
+                    ctx.fillText('💚', gameCanvas.width - 40 - (i * 30), 30);
+                }
+            } else if (!gameStarted) {
+                // Start screen
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 36px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('BLINK & JUMP', gameCanvas.width / 2, 100);
+
+                ctx.font = '20px sans-serif';
+                ctx.fillStyle = '#22c55e';
+                ctx.fillText('Select a mode and blink to start!', gameCanvas.width / 2, 145);
+
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#22c55e';
+                ctx.fillText('Slow - balanced gameplay', gameCanvas.width / 2, 180);
+                ctx.fillStyle = '#ef4444';
+                ctx.fillText('Hard - fast & challenging', gameCanvas.width / 2, 200);
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillText('Eye Care - trains healthy blink rate (15/min)', gameCanvas.width / 2, 220);
+
+                ctx.fillStyle = '#6b7280';
+                ctx.font = '12px sans-serif';
+                ctx.fillText('Research: We blink 15-20x/min normally, but only 5x/min on screens!', gameCanvas.width / 2, 255);
+
+                if (blinkDetected) {
+                    blinkDetected = false;
+                    resetGame();
+                }
+            } else {
+                // Game over screen
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 36px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', gameCanvas.width / 2, 120);
+
+                ctx.font = '20px sans-serif';
+                ctx.fillText(`Score: ${Math.floor(score / 10)}`, gameCanvas.width / 2, 160);
+
+                ctx.fillStyle = '#9ca3af';
+                ctx.font = '16px sans-serif';
+                ctx.fillText(`Mode: ${MODES[currentMode].name}`, gameCanvas.width / 2, 195);
+                ctx.fillStyle = '#22c55e';
+                ctx.fillText('Double blink to restart', gameCanvas.width / 2, 230);
+
+                // Only restart on double blink
+                if (doubleBlink) {
+                    doubleBlink = false;
+                    blinkDetected = false;
+                    resetGame();
+                }
+                // Clear single blink so it doesn't accumulate
+                blinkDetected = false;
+            }
+
+            dino.draw();
+            drawObstacles();
+            drawPowerups();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Mode buttons
+        btnNormal.addEventListener('click', () => setMode('normal'));
+        btnHard.addEventListener('click', () => setMode('hard'));
+        btnEyecare.addEventListener('click', () => setMode('eyecare'));
+
+        // Keyboard fallback
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameRunning) {
+                    dino.jump();
+                } else {
+                    resetGame();
+                }
+            }
+            // Number keys to switch modes
+            if (e.code === 'Digit1') setMode('normal');
+            if (e.code === 'Digit2') setMode('hard');
+            if (e.code === 'Digit3') setMode('eyecare');
+        });
+
+        // ============================================
+        // INIT
+        // ============================================
+        async function init() {
+            const cam = await setupCamera();
+            if (cam) {
+                const loaded = await loadModel();
+                if (loaded) {
+                    detectFace();
+                }
+            }
+            gameLoop();
+        }
+
+        init();
+    </script>
+</body>
+</html>
