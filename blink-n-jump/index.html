@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Blink & Jump - Dino Game</title>
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -73,6 +73,63 @@
                 display: flex;
             }
         }
+        /* Mobile landscape optimizations */
+        @media (max-height: 500px) and (orientation: landscape) {
+            body {
+                padding: 0.5rem;
+            }
+            h1 {
+                font-size: 1.25rem !important;
+                margin-bottom: 0.25rem !important;
+            }
+            .subtitle {
+                font-size: 0.7rem !important;
+                margin-bottom: 0.5rem !important;
+            }
+            #game-canvas {
+                max-width: 100%;
+                height: auto;
+            }
+            .game-layout {
+                flex-direction: row !important;
+                gap: 0.5rem !important;
+            }
+            .score-panel {
+                flex-wrap: nowrap !important;
+                gap: 0.5rem !important;
+                margin-top: 0.25rem !important;
+            }
+            .score-panel > div {
+                padding: 0.25rem 0.5rem !important;
+            }
+            .score-panel .text-2xl {
+                font-size: 1rem !important;
+            }
+            .mode-buttons {
+                margin-top: 0.25rem !important;
+                gap: 0.25rem !important;
+            }
+            .mode-buttons button {
+                padding: 0.25rem 0.5rem !important;
+                font-size: 0.7rem !important;
+            }
+            #webcam-container {
+                width: 120px !important;
+                height: 90px !important;
+            }
+            .info-panel {
+                display: none;
+            }
+            #status {
+                margin-top: 0.25rem !important;
+                padding: 0.25rem !important;
+                font-size: 0.7rem !important;
+            }
+            .project-nav {
+                padding: 0.25rem 0.5rem !important;
+                font-size: 0.7rem !important;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4"><style id="project-nav-style">.project-nav{font-family:"SF Mono","Monaco","Menlo",monospace;background:#1a1a2e;padding:0.5rem 1rem;font-size:0.9rem;}.project-nav a{color:#00d9ff;text-decoration:none;}.project-nav a:hover{text-decoration:underline;}.project-nav .sep{color:#666;}</style><nav class="project-nav"><a href="../index.html">~/projects</a><span class="sep">/</span><span>blink-n-jump</span></nav>
@@ -86,13 +143,13 @@
     </div>
 
     <h1 class="text-3xl font-extrabold mb-2 text-blue-400">Blink & Jump</h1>
-    <p class="text-gray-400 text-sm mb-4">blink to make the dino jump! don't worry, i am not collecting/using any your data!!</p>
-    <div class="flex flex-col lg:flex-row gap-6 items-start justify-center">
+    <p class="subtitle text-gray-400 text-sm mb-4">blink to make the dino jump! don't worry, i am not collecting/using any your data!!</p>
+    <div class="game-layout flex flex-col lg:flex-row gap-6 items-start justify-center">
         <!-- Game Area -->
         <div class="flex flex-col items-center">
             <canvas id="game-canvas" width="800" height="300"></canvas>
 
-            <div class="flex gap-4 mt-4 flex-wrap justify-center">
+            <div class="score-panel flex gap-4 mt-4 flex-wrap justify-center">
                 <div class="bg-gray-800 rounded-lg px-4 py-2 text-center">
                     <div class="text-gray-400 text-xs">Score</div>
                     <div id="score" class="text-2xl font-bold text-green-400">0</div>
@@ -111,7 +168,7 @@
                 </div>
             </div>
 
-            <div class="flex gap-2 mt-3">
+            <div class="mode-buttons flex gap-2 mt-3">
                 <button id="btn-normal" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition">Slow</button>
                 <button id="btn-hard" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-sm font-medium transition">Hard</button>
                 <button id="btn-eyecare" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-sm font-medium transition">Eye Care</button>
@@ -133,7 +190,7 @@
                 <canvas id="overlay"></canvas>
             </div>
 
-            <div class="bg-gray-800 rounded-lg p-3 text-xs leading-relaxed border border-gray-700 max-w-[200px]">
+            <div class="info-panel bg-gray-800 rounded-lg p-3 text-xs leading-relaxed border border-gray-700 max-w-[200px]">
                 <h2 class="text-blue-400 font-bold mb-2">How to play</h2>
                 <div class="text-gray-300 space-y-1">
                     <p><span class="text-green-400">Blink</span> to jump</p>
@@ -1001,9 +1058,31 @@
         });
 
         // ============================================
+        // RESPONSIVE CANVAS
+        // ============================================
+        function resizeCanvas() {
+            const maxWidth = Math.min(window.innerWidth - 20, 800);
+            const aspectRatio = 800 / 300;
+
+            if (window.innerWidth < 850) {
+                gameCanvas.style.width = maxWidth + 'px';
+                gameCanvas.style.height = (maxWidth / aspectRatio) + 'px';
+            } else {
+                gameCanvas.style.width = '';
+                gameCanvas.style.height = '';
+            }
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('orientationchange', () => {
+            setTimeout(resizeCanvas, 100);
+        });
+
+        // ============================================
         // INIT
         // ============================================
         async function init() {
+            resizeCanvas();
             const cam = await setupCamera();
             if (cam) {
                 const loaded = await loadModel();
