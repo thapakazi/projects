@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eye Blink Counter & Outline</title>
+    <style>
+        /* Styles for clean, centered layout and responsiveness */
+        body {
+            font-family: 'Inter', sans-serif;
+            text-align: center;
+            padding: 1rem;
+            background-color: #f0f4f8;
+            color: #1e293b;
+        }
+        h1 {
+            color: #0d9488;
+            margin-bottom: 0.5rem;
+        }
+        #video-container {
+            position: relative;
+            /* Use fluid width for responsiveness */
+            width: 90vw;
+            max-width: 640px;
+            aspect-ratio: 4 / 3; /* Maintain 4:3 aspect ratio */
+            margin: 1.5rem auto;
+            border: 3px solid #0d9488;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        #video, #canvas {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+        }
+        #video {
+            /* Flips the video for a natural mirror effect */
+            transform: scaleX(-1);
+            z-index: 5;
+        }
+        #canvas {
+            /* Canvas is responsible for drawing outlines */
+            z-index: 10;
+        }
+        #counter-box {
+            background-color: #ffffff;
+            padding: 1.5rem 2rem;
+            margin-top: 1rem;
+            border-radius: 8px;
+            display: inline-block;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        #status {
+            font-size: 1.1em;
+            color: #475569;
+            margin-bottom: 0.5rem;
+        }
+        #counter {
+            font-size: 2.8em;
+            font-weight: 700;
+            color: #0ea5e9;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>👁️ Eye Blink Counter</h1>
+    <p>Please allow camera access. The eye outlines will appear once tracking begins.</p>
+
+    <div id="video-container">
+        <!-- The video element provides the raw pixel data for TF.js -->
+        <video id="video" autoplay playsinline></video>
+        <!-- The canvas is where we draw the outlines and landmarks -->
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="counter-box">
+        <div id="status">Status: **Loading TensorFlow.js models...**</div>
+        <div id="counter">Blinks: **0**</div>
+    </div>
+
+    <!-- TensorFlow.js Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.14.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.1/dist/face-landmarks-detection.min.js"></script>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const statusElement = document.getElementById('status');
+        const counterElement = document.getElementById('counter');
+        const ctx = canvas.getContext('2d');
+
+        let detector;
+        let blinks = 0;
+
+        // --- Blink Parameters ---
+        const EAR_THRESHOLD = 0.23;
+        const CONSECUTIVE_FRAMES = 2;
+        let frame_counter = 0;
+
+        // --- MediaPipe Eye Landmark Indices for EAR (Ordered for drawing outline) ---
+        const LEFT_EYE_INDICES = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
+        const RIGHT_EYE_INDICES = [362, 382, 381, 380, 374, 390, 249, 399, 389, 378, 384, 385, 386, 387, 388, 466];
+        // For EAR calculation, we only need a few: [inner_corner, top_mid, top_outer, outer_corner, bottom_outer, bottom_mid]
+        const LEFT_EAR_POINTS = [33, 160, 158, 133, 153, 144];
+        const RIGHT_EAR_POINTS = [362, 385, 387, 263, 373, 380];
+
+
+        // --- Utility Functions ---
+
+        /** Calculates distance between two points (x, y). */
+        function dist(p1, p2) {
+            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+        }
+
+        /** Calculates the Eye Aspect Ratio (EAR) for blink detection. */
+        function eyeAspect(eyePoints) {
+            // eyePoints must be in the order: [P1, P2, P3, P4, P5, P6]
+            const A = dist(eyePoints[1], eyePoints[5]); // Vertical distance (P2-P6)
+            const B = dist(eyePoints[2], eyePoints[4]); // Vertical distance (P3-P5)
+            const C = dist(eyePoints[0], eyePoints[3]); // Horizontal distance (P1-P4)
+            return (A + B) / (2.0 * C);
+        }
+
+        /** Draws a connected outline for a set of eye landmarks. */
+        function drawEyeOutline(landmarks, indices, color) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            // Move to the first point
+            let firstPoint = landmarks[indices[0]];
+            ctx.moveTo(firstPoint[0], firstPoint[1]);
+
+            // Draw lines to subsequent points
+            for (let i = 1; i < indices.length; i++) {
+                let nextPoint = landmarks[indices[i]];
+                ctx.lineTo(nextPoint[0], nextPoint[1]);
+            }
+
+            // Close the path to connect the last point to the first
+            ctx.closePath();
+            ctx.stroke();
+        }
+
+        // --- Main Detection Loop ---
+        async function detectBlink() {
+            // CRITICAL FIX: Ensures the video element is ready for TF.js to read pixels.
+            // videoWidth/videoHeight must be greater than 0, and readyState must be HAVE_ENOUGH_DATA (4) or HAVE_FUTURE_DATA (3).
+            if (!video.videoWidth || !video.videoHeight || video.readyState < 3) {
+                requestAnimationFrame(detectBlink);
+                return;
+            }
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            // 1. Prepare Canvas Context (Flip for Mirror Effect)
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.translate(-canvas.width, 0);
+
+            // 2. Predict facial landmarks
+            // We pass the raw HTMLVideoElement here.
+            const predictions = await detector.estimateFaces({
+                input: video,
+                flipHorizontal: false
+            });
+
+            if (predictions.length > 0) {
+                const face = predictions[0];
+                const landmarks = face.scaledMesh; // [x, y, z] coordinates
+
+                // --- DRAWING OUTLINES ---
+                drawEyeOutline(landmarks, LEFT_EYE_INDICES, '#f97316'); // Orange outline
+                drawEyeOutline(landmarks, RIGHT_EYE_INDICES, '#10b981'); // Green outline
+
+                // 3. Eye Aspect Ratio (EAR) Calculation
+                // Select only the 6 specific points needed for the calculation
+                const leftEarPoints = LEFT_EAR_POINTS.map(i => ({x: landmarks[i][0], y: landmarks[i][1]}));
+                const rightEarPoints = RIGHT_EAR_POINTS.map(i => ({x: landmarks[i][0], y: landmarks[i][1]}));
+
+                const ear_left = eyeAspect(leftEarPoints);
+                const ear_right = eyeAspect(rightEarPoints);
+                const avg_ear = (ear_left + ear_right) / 2.0;
+
+                // 4. Blink Detection Logic
+                if (avg_ear < EAR_THRESHOLD) {
+                    frame_counter += 1;
+                } else {
+                    if (frame_counter >= CONSECUTIVE_FRAMES) {
+                        blinks += 1;
+                        counterElement.innerHTML = `Blinks: **${blinks}**`;
+                    }
+                    frame_counter = 0;
+                }
+
+                statusElement.innerHTML = `Status: **Tracking active (EAR: ${avg_ear.toFixed(2)})**`;
+
+            } else {
+                statusElement.innerHTML = `Status: **No face detected.**`;
+            }
+
+            // 5. Restore Canvas Context
+            ctx.restore();
+
+            // Loop
+            requestAnimationFrame(detectBlink);
+        }
+
+        // --- Initialization ---
+        async function main() {
+            // 1. Load the Model
+            const detectorConfig = {
+                runtime: 'tfjs',
+                solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619',
+                maxFaces: 1
+            };
+
+            try {
+                 detector = await faceLandmarksDetection.createDetector(
+                    faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+                    detectorConfig
+                );
+                statusElement.innerHTML = 'Status: **Model loaded. Starting video stream...**';
+            } catch (e) {
+                console.error("Model loading failed:", e);
+                statusElement.innerHTML = 'Status: **ERROR: Model failed to load.** Check console.';
+                return;
+            }
+
+            // 2. Start Video Stream (Camera Access Request)
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+            } catch (err) {
+                statusElement.innerHTML = 'Status: **ERROR: Cannot access webcam.** Please allow access and reload.';
+                console.error("Webcam access error:", err);
+                return;
+            }
+
+            // 3. Wait for video to load and then start detection
+            // We use 'loadedmetadata' to ensure stream properties are ready
+            video.addEventListener('loadedmetadata', () => {
+                video.play();
+                statusElement.innerHTML = 'Status: **Face tracking active.**';
+                // Start the main loop only after video is playing
+                detectBlink();
+            });
+        }
+
+        main();
+    </script>
+</body>
+</html>
