@@ -1,0 +1,1740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mirror Eyes - Real-Time Eye Mirror</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.1/dist/face-landmarks-detection.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+        }
+        #eyes-canvas {
+            max-width: 100%;
+            border-radius: 1rem;
+        }
+                .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        .status-dot.active { background: #22c55e; }
+        .status-dot.loading { background: #eab308; }
+        .status-dot.error { background: #ef4444; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="text-white flex flex-col items-center justify-center p-4 min-h-screen"><style id="project-nav-style">.project-nav{font-family:"SF Mono","Monaco","Menlo",monospace;background:#1a1a2e;padding:0.5rem 1rem;font-size:0.9rem;}.project-nav a{color:#00d9ff;text-decoration:none;}.project-nav a:hover{text-decoration:underline;}.project-nav .sep{color:#666;}</style><nav class="project-nav"><a href="../index.html">~/projects</a><span class="sep">/</span><span>mirror-eyes</span></nav>
+    <nav class="project-nav fixed top-0 left-0 right-0 p-2 text-sm" style="font-family: monospace; background: rgba(26,26,46,0.9);">
+        <a href="../index.html" class="text-cyan-400 hover:underline">~/projects</a>
+        <span class="text-gray-600">/</span>
+        <span class="text-gray-400">mirror-eyes</span>
+    </nav>
+
+    <div class="text-center mb-6 mt-12">
+        <h1 class="text-3xl font-bold text-cyan-400 mb-2">Mirror Eyes</h1>
+        <p class="text-gray-400 text-sm">Your eyes, mirrored in real-time</p>
+    </div>
+
+    <div id="status" class="flex items-center gap-2 mb-4 px-4 py-2 bg-gray-800/50 rounded-full text-sm">
+        <div class="status-dot loading"></div>
+        <span>Initializing...</span>
+    </div>
+
+    <div id="debug" class="flex gap-6 mb-4 text-xs text-gray-400 font-mono">
+        <span><span class="text-cyan-400">L-EAR:</span> <span id="left-ear">--</span></span>
+        <span><span class="text-pink-400">R-EAR:</span> <span id="right-ear">--</span></span>
+    </div>
+    <p class="text-xs text-gray-500 mb-4">Cyan=Left eye (yours), Magenta=Right eye (yours)</p>
+
+    <div class="relative flex gap-4">
+        <canvas id="eyes-canvas" width="1200" height="600"></canvas>
+        <div id="nose-legend" class="hidden bg-gray-800/90 rounded-lg p-3 overflow-y-auto" style="max-height: 600px; min-width: 200px;">
+            <div class="text-xs text-gray-400 mb-2">Click to toggle landmarks:</div>
+            <div id="landmark-grid" class="grid grid-cols-4 gap-1"></div>
+            <div class="mt-3 pt-2 border-t border-gray-600">
+                <div class="text-xs text-cyan-400 mb-1">Selected: <span id="selected-count">0</span></div>
+                <button id="clear-selection" class="text-xs px-2 py-1 bg-red-600 hover:bg-red-500 rounded">Clear All</button>
+                <button id="copy-selection" class="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded ml-1">Copy Array</button>
+                <button id="toggle-dots" class="text-xs px-2 py-1 bg-purple-600 hover:bg-purple-500 rounded ml-1">Show Dots</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-6 flex gap-4 flex-wrap justify-center items-center">
+        <button id="style-btn" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">
+            Style: <span id="style-label">Mesh</span>
+        </button>
+        <button id="color-btn" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">
+            Iris: <span id="color-label">Brown</span>
+        </button>
+        <button id="lip-color-btn" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition hidden">
+            Lips: <span id="lip-color-label">None</span>
+        </button>
+        <button id="nose-select-btn" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">
+            🔴 Select Nose
+        </button>
+        <div class="flex items-center gap-2 px-4 py-2 bg-gray-800 rounded-lg">
+            <label for="size-slider" class="text-sm text-gray-400">Size:</label>
+            <input type="range" id="size-slider" min="0.5" max="2" step="0.1" value="1" class="w-24 cursor-pointer">
+            <span id="size-label" class="text-sm w-8">1x</span>
+        </div>
+    </div>
+
+    <div id="video-container" style="position: fixed; bottom: 1rem; right: 1rem; width: 240px; z-index: 100;">
+        <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+            <button id="overlay-toggle" style="flex: 1; padding: 4px 8px; background: #374151; border: 1px solid #4b5563; border-radius: 4px; color: #9ca3af; font-size: 11px; cursor: pointer;">
+                Overlay: <span id="overlay-label">All</span>
+            </button>
+            <button id="swap-btn" style="padding: 4px 8px; background: #374151; border: 1px solid #4b5563; border-radius: 4px; color: #9ca3af; font-size: 11px; cursor: pointer;" title="Swap video and eyes position">
+                ⇄ Swap
+            </button>
+        </div>
+        <div style="position: relative; width: 100%; height: 180px;">
+            <video id="video-preview" playsinline autoplay muted style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 0.5rem; border: 2px solid rgba(255,255,255,0.2); transform: scaleX(-1); object-fit: cover; background: #000;"></video>
+            <canvas id="tracking-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 0.5rem; transform: scaleX(-1);"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // CONFIGURATION
+        // ============================================
+        const EYE_STYLES = ['Mesh', 'Full Face', 'Cartoon', 'Anime'];
+        const IRIS_COLORS = [
+            { name: 'Brown', color: '#8B4513', highlight: '#D2691E' },
+            { name: 'Blue', color: '#1E90FF', highlight: '#87CEEB' },
+            { name: 'Green', color: '#228B22', highlight: '#90EE90' },
+            { name: 'Hazel', color: '#8E7618', highlight: '#C4A747' },
+            { name: 'Gray', color: '#708090', highlight: '#B0C4DE' }
+        ];
+
+        const LIP_COLORS = [
+            { name: 'None', color: null },              // Natural/no color
+            { name: 'Red', color: '#c41e3a' },
+            { name: 'Pink', color: '#e75480' },
+            { name: 'Berry', color: '#8e4585' },
+            { name: 'Coral', color: '#f88379' },
+            { name: 'Nude', color: '#c9a0a0' }
+        ];
+
+        let currentStyleIndex = 0;
+        let currentColorIndex = 0;
+        let currentLipColorIndex = 0;  // Default to 'None'
+        let eyeScale = 1.0;  // Size multiplier for eyes
+
+        // Overlay modes
+        const OVERLAY_MODES = ['All', 'Video Only', 'Face Outline', 'None'];
+        let currentOverlayMode = 0;
+        let isSwapped = false;  // Track if video and eyes are swapped
+        let noseSelectionMode = false;  // Track if we're selecting nose landmarks
+        // Pre-select the landmarks currently used in nose drawing
+        let selectedNoseLandmarks = [168, 6, 197, 195, 5, 4, 1, 19, 198, 131, 115, 218, 79, 238, 420, 360, 344, 309, 458];
+        let showSelectedDots = true;  // Toggle to show/hide dots on canvas
+
+        // Nose area landmark indices to display for selection
+        // These are around the nose region in MediaPipe Face Mesh
+        const NOSE_LANDMARK_CANDIDATES = [
+            // Nose bridge top to bottom
+            168, 6, 197, 195, 5, 4, 1, 19, 94, 2,
+            // Left side of nose
+            131, 198, 217, 218, 219, 220, 64, 48, 115, 45,
+            // Right side of nose
+            360, 420, 437, 438, 439, 440, 294, 278, 344, 275, 74,
+            // Nostril area
+            59, 166, 79, 238, 239, 241, 125, 354, 461, 309, 458, 459,
+            // Additional nose contour points
+            98, 97, 326, 327, 237
+        ];
+
+        // MediaPipe landmarks - CORRECTED for proper EAR calculation
+        // Each eye needs: outer corner, inner corner, upper lid points, lower lid points
+        const LEFT_EYE = {
+            outerCorner: 362,
+            innerCorner: 263,
+            upperLid: [386, 385, 384],  // Points on upper eyelid that move DOWN when closing
+            lowerLid: [374, 373, 380]   // Points on lower eyelid that move UP when closing (FIXED: was 390)
+        };
+        const RIGHT_EYE = {
+            outerCorner: 33,
+            innerCorner: 133,
+            upperLid: [159, 158, 157],  // Points on upper eyelid that move DOWN when closing
+            lowerLid: [145, 144, 153]   // Points on lower eyelid that move UP when closing
+        };
+        // Keep old arrays for overlay visualization (will update overlay too)
+        const LEFT_EYE_EAR_INDICES = [362, 386, 374, 263, 385, 373]; // Reordered for overlay
+        const RIGHT_EYE_EAR_INDICES = [33, 159, 145, 133, 158, 144]; // Reordered for overlay
+        const LEFT_IRIS_CENTER = 468;
+        const RIGHT_IRIS_CENTER = 473;
+
+        // Complete eye contour landmarks from MediaPipe face_mesh_connections
+        // Left eye contour (ordered clockwise for smooth path)
+        const LEFT_EYE_CONTOUR = [
+            362, 398, 384, 385, 386, 387, 388, 466, 263,  // Upper lid (outer to inner)
+            249, 390, 373, 374, 380, 381, 382, 362        // Lower lid (inner to outer, back to start)
+        ];
+        // Right eye contour (ordered clockwise for smooth path)
+        const RIGHT_EYE_CONTOUR = [
+            33, 246, 161, 160, 159, 158, 157, 173, 133,   // Upper lid (outer to inner)
+            155, 154, 153, 145, 144, 163, 7, 33           // Lower lid (inner to outer, back to start)
+        ];
+        // Iris landmarks (4 points forming a diamond around iris)
+        const LEFT_IRIS = [474, 475, 476, 477, 474];   // Close the loop
+        const RIGHT_IRIS = [469, 470, 471, 472, 469];  // Close the loop
+        // Eyebrow landmarks
+        const LEFT_EYEBROW = [276, 283, 282, 295, 285];    // Upper edge
+        const LEFT_EYEBROW_LOWER = [300, 293, 334, 296, 336]; // Lower edge
+        const RIGHT_EYEBROW = [46, 53, 52, 65, 55];        // Upper edge
+        const RIGHT_EYEBROW_LOWER = [70, 63, 105, 66, 107]; // Lower edge
+
+        // Face outline (oval) - ordered for smooth path
+        const FACE_OVAL = [
+            10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377,
+            152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10
+        ];
+
+        // Lips - outer contour
+        const LIPS_OUTER = [
+            61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291,  // Lower lip outer
+            409, 270, 269, 267, 0, 37, 39, 40, 185, 61           // Upper lip outer (back to start)
+        ];
+        // Lips - inner contour
+        const LIPS_INNER = [
+            78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308,   // Lower lip inner
+            415, 310, 311, 312, 13, 82, 81, 80, 191, 78          // Upper lip inner (back to start)
+        ];
+
+        // Nose landmarks - bridge and nostrils
+        const NOSE_BRIDGE = [168, 6, 197, 195, 5, 4];           // Top to bottom
+        const NOSE_TIP = [4, 1, 19, 94, 2];                      // Tip area
+        const NOSE_LEFT = [98, 97, 2, 326, 327];                 // Left nostril area
+        const NOSE_RIGHT = [64, 48, 115, 220, 45];               // Right nostril area
+        const NOSE_BOTTOM = [64, 98, 97, 2, 326, 327, 294];      // Bottom contour
+
+        
+        const EAR_THRESHOLD = 0.28;      // Above this = fully open
+        const EAR_FULLY_CLOSED = 0.20;  // Below this = fully closed (raised from 0.15)
+
+        // ============================================
+        // GLOBAL STATE
+        // ============================================
+        const video = document.getElementById('video-preview');
+        const trackingCanvas = document.getElementById('tracking-canvas');
+        const trackingCtx = trackingCanvas.getContext('2d');
+        const eyesCanvas = document.getElementById('eyes-canvas');
+        const ctx = eyesCanvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+
+        let detector = null;
+        let animationFrameId = null;
+        let lastKeypoints = null; // Store keypoints for overlay drawing
+
+        // Smoothing factor for EAR (lower = smoother but laggier)
+        const SMOOTHING = 0.4;  // Higher = more responsive (0.3-0.5 range)
+
+        // Eye openness state (smoothed values) - used for debug display
+        let leftEyeOpenness = 1;  // 0 = closed, 1 = fully open
+        let rightEyeOpenness = 1;
+
+        // ============================================
+        // UTILITY FUNCTIONS
+        // ============================================
+        function distance(p1, p2) {
+            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+        }
+
+        // NEW: Proper EAR calculation using upper/lower lid points
+        function calculateEARNew(keypoints, eyeConfig, debugLabel = '') {
+            if (keypoints.length === 0) return 1;
+
+            const outerCorner = keypoints[eyeConfig.outerCorner];
+            const innerCorner = keypoints[eyeConfig.innerCorner];
+
+            if (!outerCorner || !innerCorner) {
+                return 1;
+            }
+
+            // Calculate average vertical distance between upper and lower lid
+            let verticalSum = 0;
+            let validPairs = 0;
+
+            for (let i = 0; i < eyeConfig.upperLid.length; i++) {
+                const upperPoint = keypoints[eyeConfig.upperLid[i]];
+                const lowerPoint = keypoints[eyeConfig.lowerLid[i]];
+
+                if (upperPoint && lowerPoint) {
+                    verticalSum += distance(upperPoint, lowerPoint);
+                    validPairs++;
+                }
+            }
+
+            if (validPairs === 0) {
+                return 1;
+            }
+
+            const avgVertical = verticalSum / validPairs;
+            const horizontal = distance(outerCorner, innerCorner);
+
+            const ear = avgVertical / horizontal;
+
+            return ear;
+        }
+
+        // Keep old function for backwards compatibility with overlay
+        function calculateEAR(keypoints, indices, debugLabel = '') {
+            if (keypoints.length === 0) return 1;
+            const p1 = keypoints[indices[0]];
+            const p2 = keypoints[indices[1]];
+            const p3 = keypoints[indices[2]];
+            const p4 = keypoints[indices[3]];
+            const p5 = keypoints[indices[4]];
+            const p6 = keypoints[indices[5]];
+            if (!p1 || !p2 || !p3 || !p4 || !p5 || !p6) return 1;
+            const A = distance(p2, p3); // Upper to lower on left side
+            const B = distance(p5, p6); // Upper to lower on right side
+            const C = distance(p1, p4); // Horizontal
+            return (A + B) / (2.0 * C);
+        }
+
+        function earToOpenness(ear) {
+            // Map EAR value to 0-1 openness
+            if (ear >= EAR_THRESHOLD) return 1;
+            if (ear <= EAR_FULLY_CLOSED) return 0;
+            return (ear - EAR_FULLY_CLOSED) / (EAR_THRESHOLD - EAR_FULLY_CLOSED);
+        }
+
+        function lerp(current, target, factor) {
+            return current + (target - current) * factor;
+        }
+
+        function setStatus(message, state = 'loading') {
+            const dot = statusEl.querySelector('.status-dot');
+            const text = statusEl.querySelector('span');
+            dot.className = `status-dot ${state}`;
+            text.textContent = message;
+        }
+
+        // Draw mesh-based eyes from actual face landmarks
+        function drawMeshEyes(ctx, keypoints, irisColor) {
+            if (!keypoints || keypoints.length < 478) return;
+
+            const canvasW = ctx.canvas.width;
+            const canvasH = ctx.canvas.height;
+
+            // Get bounding box of both eyes to calculate scale
+            const allEyePoints = [...LEFT_EYE_CONTOUR, ...RIGHT_EYE_CONTOUR].map(i => keypoints[i]).filter(p => p);
+            if (allEyePoints.length === 0) return;
+
+            const minX = Math.min(...allEyePoints.map(p => p.x));
+            const maxX = Math.max(...allEyePoints.map(p => p.x));
+            const minY = Math.min(...allEyePoints.map(p => p.y));
+            const maxY = Math.max(...allEyePoints.map(p => p.y));
+
+            // Calculate scale to fit canvas with padding
+            const eyesWidth = maxX - minX;
+            const eyesHeight = maxY - minY;
+            const scale = Math.min(canvasW * 0.8 / eyesWidth, canvasH * 0.6 / eyesHeight) * eyeScale;
+
+            // Center point of eyes in video coordinates
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+
+            // Transform function: video coords -> canvas coords (mirrored)
+            function transform(point) {
+                // Mirror X (because video is mirrored via CSS)
+                const x = canvasW / 2 - (point.x - centerX) * scale;
+                const y = canvasH / 2 + (point.y - centerY) * scale;
+                return { x, y };
+            }
+
+            // Helper to draw a path from landmark indices
+            function drawPath(indices, color, lineWidth, closed = false, fill = false) {
+                const points = indices.map(i => keypoints[i]).filter(p => p);
+                if (points.length < 2) return;
+
+                ctx.beginPath();
+                const first = transform(points[0]);
+                ctx.moveTo(first.x, first.y);
+
+                for (let i = 1; i < points.length; i++) {
+                    const p = transform(points[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+
+                if (closed) ctx.closePath();
+
+                if (fill) {
+                    ctx.fillStyle = color;
+                    ctx.fill();
+                } else {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = lineWidth;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.stroke();
+                }
+            }
+
+            // Helper to draw filled circle at a landmark
+            function drawPoint(index, color, radius) {
+                const p = keypoints[index];
+                if (!p) return;
+                const tp = transform(p);
+                ctx.beginPath();
+                ctx.arc(tp.x, tp.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = color;
+                ctx.fill();
+            }
+
+            // Draw eyebrows (faint, thin lines)
+            ctx.globalAlpha = 0.4;
+            drawPath(LEFT_EYEBROW, '#8B7355', 2);
+            drawPath(LEFT_EYEBROW_LOWER, '#8B7355', 1.5);
+            drawPath(RIGHT_EYEBROW, '#8B7355', 2);
+            drawPath(RIGHT_EYEBROW_LOWER, '#8B7355', 1.5);
+
+            // Helper to create clipping path from contour indices
+            function createClipPath(indices) {
+                const points = indices.map(i => keypoints[i]).filter(p => p);
+                if (points.length < 3) return false;
+
+                ctx.beginPath();
+                const first = transform(points[0]);
+                ctx.moveTo(first.x, first.y);
+
+                for (let i = 1; i < points.length; i++) {
+                    const p = transform(points[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+                ctx.closePath();
+                return true;
+            }
+
+            // Helper to draw iris with pupil and highlight
+            function drawIris(irisIndices, irisColorObj) {
+                const irisPoints = irisIndices.slice(0, 4).map(i => keypoints[i]).filter(p => p);
+                if (irisPoints.length !== 4) return;
+
+                const irisCenter = {
+                    x: irisPoints.reduce((s, p) => s + p.x, 0) / 4,
+                    y: irisPoints.reduce((s, p) => s + p.y, 0) / 4
+                };
+                const irisRadius = (
+                    distance(irisPoints[0], irisPoints[2]) +
+                    distance(irisPoints[1], irisPoints[3])
+                ) / 4 * scale;
+
+                const tc = transform(irisCenter);
+
+                // Iris gradient
+                const irisGrad = ctx.createRadialGradient(tc.x, tc.y, 0, tc.x, tc.y, irisRadius);
+                irisGrad.addColorStop(0, irisColorObj.highlight);
+                irisGrad.addColorStop(0.5, irisColorObj.color);
+                irisGrad.addColorStop(1, '#1a1a1a');
+
+                ctx.beginPath();
+                ctx.arc(tc.x, tc.y, irisRadius, 0, Math.PI * 2);
+                ctx.fillStyle = irisGrad;
+                ctx.fill();
+
+                // Pupil
+                ctx.beginPath();
+                ctx.arc(tc.x, tc.y, irisRadius * 0.35, 0, Math.PI * 2);
+                ctx.fillStyle = '#000';
+                ctx.fill();
+
+                // Highlight
+                ctx.beginPath();
+                ctx.arc(tc.x - irisRadius * 0.25, tc.y - irisRadius * 0.25, irisRadius * 0.2, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.fill();
+            }
+
+            // Draw LEFT eye with clipped iris
+            ctx.save();
+            ctx.globalAlpha = 0.95;
+            // Fill white eye shape
+            if (createClipPath(LEFT_EYE_CONTOUR)) {
+                ctx.fillStyle = '#f8f8f8';
+                ctx.fill();
+                // Clip to eye shape for iris
+                ctx.clip();
+                // Draw iris inside the clip (hidden when eye closed)
+                ctx.globalAlpha = 1;
+                drawIris(LEFT_IRIS, irisColor);
+            }
+            ctx.restore();
+
+            // Draw RIGHT eye with clipped iris
+            ctx.save();
+            ctx.globalAlpha = 0.95;
+            // Fill white eye shape
+            if (createClipPath(RIGHT_EYE_CONTOUR)) {
+                ctx.fillStyle = '#f8f8f8';
+                ctx.fill();
+                // Clip to eye shape for iris
+                ctx.clip();
+                // Draw iris inside the clip (hidden when eye closed)
+                ctx.globalAlpha = 1;
+                drawIris(RIGHT_IRIS, irisColor);
+            }
+            ctx.restore();
+
+            // Draw eye outlines on top (not clipped)
+            ctx.globalAlpha = 0.5;
+            drawPath(LEFT_EYE_CONTOUR, '#666', 1.5, true);
+            drawPath(RIGHT_EYE_CONTOUR, '#666', 1.5, true);
+
+            // Draw faint eyelid lines on top (upper lid is now first 9 points)
+            ctx.globalAlpha = 0.3;
+            drawPath(LEFT_EYE_CONTOUR.slice(0, 9), '#333', 2);    // Upper lid
+            drawPath(RIGHT_EYE_CONTOUR.slice(0, 9), '#333', 2);   // Upper lid
+
+            ctx.globalAlpha = 1;
+
+            // DEBUG: Draw landmark indices on mesh eyes
+            const mode = OVERLAY_MODES[currentOverlayMode];
+            if (mode === 'All') {
+                ctx.font = '10px monospace';
+                ctx.fillStyle = '#ff0';
+
+                // Draw LEFT eye contour points with indices
+                LEFT_EYE_CONTOUR.forEach((idx, i) => {
+                    const p = keypoints[idx];
+                    if (p) {
+                        const tp = transform(p);
+                        ctx.beginPath();
+                        ctx.arc(tp.x, tp.y, 3, 0, Math.PI * 2);
+                        ctx.fillStyle = i < 9 ? '#f0f' : '#0ff';  // Magenta for upper, cyan for lower
+                        ctx.fill();
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(idx.toString(), tp.x + 4, tp.y - 4);
+                    }
+                });
+
+                // Draw RIGHT eye contour points with indices
+                RIGHT_EYE_CONTOUR.forEach((idx, i) => {
+                    const p = keypoints[idx];
+                    if (p) {
+                        const tp = transform(p);
+                        ctx.beginPath();
+                        ctx.arc(tp.x, tp.y, 3, 0, Math.PI * 2);
+                        ctx.fillStyle = i < 9 ? '#f80' : '#ff0';  // Orange for upper, yellow for lower
+                        ctx.fill();
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(idx.toString(), tp.x + 4, tp.y - 4);
+                    }
+                });
+            }
+        }
+
+        // Draw full face mesh from landmarks
+        function drawFullFace(ctx, keypoints, irisColor, lipColor) {
+            if (!keypoints || keypoints.length < 478) return;
+
+            const canvasW = ctx.canvas.width;
+            const canvasH = ctx.canvas.height;
+
+            // Get bounding box of face to calculate scale
+            const facePoints = FACE_OVAL.map(i => keypoints[i]).filter(p => p);
+            if (facePoints.length === 0) return;
+
+            const minX = Math.min(...facePoints.map(p => p.x));
+            const maxX = Math.max(...facePoints.map(p => p.x));
+            const minY = Math.min(...facePoints.map(p => p.y));
+            const maxY = Math.max(...facePoints.map(p => p.y));
+
+            // Calculate scale to fit canvas with padding
+            const faceWidth = maxX - minX;
+            const faceHeight = maxY - minY;
+            const scale = Math.min(canvasW * 0.85 / faceWidth, canvasH * 0.85 / faceHeight) * eyeScale;
+
+            // Center point of face in video coordinates
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+
+            // Transform function: video coords -> canvas coords (mirrored)
+            function transform(point) {
+                const x = canvasW / 2 - (point.x - centerX) * scale;
+                const y = canvasH / 2 + (point.y - centerY) * scale;
+                return { x, y };
+            }
+
+            // Helper to draw a path from landmark indices
+            function drawPath(indices, color, lineWidth, closed = false, fill = false) {
+                const points = indices.map(i => keypoints[i]).filter(p => p);
+                if (points.length < 2) return;
+
+                ctx.beginPath();
+                const first = transform(points[0]);
+                ctx.moveTo(first.x, first.y);
+
+                for (let i = 1; i < points.length; i++) {
+                    const p = transform(points[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+
+                if (closed) ctx.closePath();
+
+                if (fill) {
+                    ctx.fillStyle = color;
+                    ctx.fill();
+                } else {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = lineWidth;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.stroke();
+                }
+            }
+
+            // Helper to create clipping path
+            function createClipPath(indices) {
+                const points = indices.map(i => keypoints[i]).filter(p => p);
+                if (points.length < 3) return false;
+
+                ctx.beginPath();
+                const first = transform(points[0]);
+                ctx.moveTo(first.x, first.y);
+
+                for (let i = 1; i < points.length; i++) {
+                    const p = transform(points[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+                ctx.closePath();
+                return true;
+            }
+
+            // Helper to draw iris
+            function drawIris(irisIndices, irisColorObj) {
+                const irisPoints = irisIndices.slice(0, 4).map(i => keypoints[i]).filter(p => p);
+                if (irisPoints.length !== 4) return;
+
+                const irisCenter = {
+                    x: irisPoints.reduce((s, p) => s + p.x, 0) / 4,
+                    y: irisPoints.reduce((s, p) => s + p.y, 0) / 4
+                };
+                const irisRadius = (
+                    distance(irisPoints[0], irisPoints[2]) +
+                    distance(irisPoints[1], irisPoints[3])
+                ) / 4 * scale;
+
+                const tc = transform(irisCenter);
+
+                // Iris gradient
+                const irisGrad = ctx.createRadialGradient(tc.x, tc.y, 0, tc.x, tc.y, irisRadius);
+                irisGrad.addColorStop(0, irisColorObj.highlight);
+                irisGrad.addColorStop(0.5, irisColorObj.color);
+                irisGrad.addColorStop(1, '#1a1a1a');
+
+                ctx.beginPath();
+                ctx.arc(tc.x, tc.y, irisRadius, 0, Math.PI * 2);
+                ctx.fillStyle = irisGrad;
+                ctx.fill();
+
+                // Pupil
+                ctx.beginPath();
+                ctx.arc(tc.x, tc.y, irisRadius * 0.35, 0, Math.PI * 2);
+                ctx.fillStyle = '#000';
+                ctx.fill();
+
+                // Highlight
+                ctx.beginPath();
+                ctx.arc(tc.x - irisRadius * 0.25, tc.y - irisRadius * 0.25, irisRadius * 0.2, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.fill();
+            }
+
+            // Draw eyebrows
+            ctx.globalAlpha = 0.5;
+            drawPath(LEFT_EYEBROW, '#6B5344', 2.5);
+            drawPath(LEFT_EYEBROW_LOWER, '#6B5344', 2);
+            drawPath(RIGHT_EYEBROW, '#6B5344', 2.5);
+            drawPath(RIGHT_EYEBROW_LOWER, '#6B5344', 2);
+
+            // Draw LEFT eye with clipped iris
+            ctx.save();
+            ctx.globalAlpha = 0.95;
+            if (createClipPath(LEFT_EYE_CONTOUR)) {
+                ctx.fillStyle = '#f8f8f8';
+                ctx.fill();
+                ctx.clip();
+                ctx.globalAlpha = 1;
+                drawIris(LEFT_IRIS, irisColor);
+            }
+            ctx.restore();
+
+            // Draw RIGHT eye with clipped iris
+            ctx.save();
+            ctx.globalAlpha = 0.95;
+            if (createClipPath(RIGHT_EYE_CONTOUR)) {
+                ctx.fillStyle = '#f8f8f8';
+                ctx.fill();
+                ctx.clip();
+                ctx.globalAlpha = 1;
+                drawIris(RIGHT_IRIS, irisColor);
+            }
+            ctx.restore();
+
+            // Draw eye outlines
+            ctx.globalAlpha = 0.5;
+            drawPath(LEFT_EYE_CONTOUR, '#555', 1.5, true);
+            drawPath(RIGHT_EYE_CONTOUR, '#555', 1.5, true);
+
+            // Draw upper eyelid lines
+            ctx.globalAlpha = 0.4;
+            drawPath(LEFT_EYE_CONTOUR.slice(0, 9), '#333', 2);
+            drawPath(RIGHT_EYE_CONTOUR.slice(0, 9), '#333', 2);
+
+            // Draw nose using selected landmarks
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 1.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            // Nose bridge (very faint): 168 -> 6 -> 197 -> 195 -> 5 -> 4 -> 1 -> 19
+            const noseBridge = [168, 6, 197, 195, 5, 4, 1, 19].map(i => keypoints[i]).filter(p => p);
+            if (noseBridge.length >= 2) {
+                ctx.globalAlpha = 0.1;
+                ctx.beginPath();
+                const first = transform(noseBridge[0]);
+                ctx.moveTo(first.x, first.y);
+                for (let i = 1; i < noseBridge.length; i++) {
+                    const p = transform(noseBridge[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+                ctx.stroke();
+            }
+
+            // Left contour: 198 -> 131 -> 115 -> 218 -> 79 -> 238 -> 19
+            const leftNoseSide = [198, 131, 115, 218, 79, 238, 19].map(i => keypoints[i]).filter(p => p);
+            if (leftNoseSide.length >= 2) {
+                ctx.globalAlpha = 0.25;
+                ctx.beginPath();
+                const first = transform(leftNoseSide[0]);
+                ctx.moveTo(first.x, first.y);
+                for (let i = 1; i < leftNoseSide.length; i++) {
+                    const p = transform(leftNoseSide[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+                ctx.stroke();
+            }
+
+            // Right contour: 420 -> 360 -> 344 -> 309 -> 458 -> 19
+            const rightNoseSide = [420, 360, 344, 309, 458, 19].map(i => keypoints[i]).filter(p => p);
+            if (rightNoseSide.length >= 2) {
+                ctx.globalAlpha = 0.25;
+                ctx.beginPath();
+                const first = transform(rightNoseSide[0]);
+                ctx.moveTo(first.x, first.y);
+                for (let i = 1; i < rightNoseSide.length; i++) {
+                    const p = transform(rightNoseSide[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+                ctx.stroke();
+            }
+
+            // Draw nasolabial folds (laugh lines) - only when mouth is open
+            // Calculate mouth openness from lip landmarks
+            const upperLipCenter = keypoints[13];  // Center of upper lip
+            const lowerLipCenter = keypoints[14];  // Center of lower lip
+            const leftMouthCorner = keypoints[61];  // Left corner of mouth
+            const rightMouthCorner = keypoints[291]; // Right corner of mouth
+            const noseBase = keypoints[2];  // Bottom of nose
+
+            if (upperLipCenter && lowerLipCenter && leftMouthCorner && rightMouthCorner && noseBase) {
+                const mouthHeight = Math.abs(lowerLipCenter.y - upperLipCenter.y);
+                const mouthWidth = Math.abs(rightMouthCorner.x - leftMouthCorner.x);
+                const mouthOpenRatio = mouthHeight / mouthWidth;
+
+                // Only draw laugh lines when mouth is noticeably open
+                if (mouthOpenRatio > 0.15) {
+                    const intensity = Math.min(1, (mouthOpenRatio - 0.15) * 3);
+                    ctx.globalAlpha = 0.2 * intensity;
+                    ctx.strokeStyle = '#666';
+                    ctx.lineWidth = 1.5;
+                    ctx.lineCap = 'round';
+
+                    // Left laugh line (curved line from nose side to mouth corner)
+                    const leftStart = transform({ x: noseBase.x - (noseBase.x - leftMouthCorner.x) * 0.3, y: noseBase.y });
+                    const leftEnd = transform(leftMouthCorner);
+                    const leftCtrl = transform({ x: leftMouthCorner.x - mouthWidth * 0.15, y: (noseBase.y + leftMouthCorner.y) / 2 });
+
+                    ctx.beginPath();
+                    ctx.moveTo(leftStart.x, leftStart.y);
+                    ctx.quadraticCurveTo(leftCtrl.x, leftCtrl.y, leftEnd.x, leftEnd.y - 5);
+                    ctx.stroke();
+
+                    // Right laugh line
+                    const rightStart = transform({ x: noseBase.x + (rightMouthCorner.x - noseBase.x) * 0.3, y: noseBase.y });
+                    const rightEnd = transform(rightMouthCorner);
+                    const rightCtrl = transform({ x: rightMouthCorner.x + mouthWidth * 0.15, y: (noseBase.y + rightMouthCorner.y) / 2 });
+
+                    ctx.beginPath();
+                    ctx.moveTo(rightStart.x, rightStart.y);
+                    ctx.quadraticCurveTo(rightCtrl.x, rightCtrl.y, rightEnd.x, rightEnd.y - 5);
+                    ctx.stroke();
+                }
+            }
+
+            // Draw lips
+            if (lipColor && lipColor.color) {
+                // Colored lips - draw as ring (outer minus inner)
+                ctx.globalAlpha = 0.75;
+
+                // Create a path that goes around outer lips, then inner lips (reverse) to create a hole
+                const outerPoints = LIPS_OUTER.map(i => keypoints[i]).filter(p => p);
+                const innerPoints = LIPS_INNER.map(i => keypoints[i]).filter(p => p);
+
+                if (outerPoints.length > 2 && innerPoints.length > 2) {
+                    ctx.beginPath();
+                    // Draw outer path clockwise
+                    let first = transform(outerPoints[0]);
+                    ctx.moveTo(first.x, first.y);
+                    for (let i = 1; i < outerPoints.length; i++) {
+                        const p = transform(outerPoints[i]);
+                        ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.closePath();
+
+                    // Draw inner path counter-clockwise (creates hole)
+                    const reversedInner = [...innerPoints].reverse();
+                    first = transform(reversedInner[0]);
+                    ctx.moveTo(first.x, first.y);
+                    for (let i = 1; i < reversedInner.length; i++) {
+                        const p = transform(reversedInner[i]);
+                        ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.closePath();
+
+                    // Fill the ring shape
+                    ctx.fillStyle = lipColor.color;
+                    ctx.fill('evenodd');
+                }
+
+                // Lip outline
+                ctx.globalAlpha = 0.5;
+                drawPath(LIPS_OUTER, lipColor.color, 2, true);
+            } else {
+                // Natural/no color - just faint outline
+                ctx.globalAlpha = 0.3;
+                drawPath(LIPS_OUTER, '#a08080', 1.5, true);
+            }
+
+            // Draw inner lip line (mouth opening outline)
+            ctx.globalAlpha = 0.3;
+            drawPath(LIPS_INNER, '#5a3030', 1, true, false);
+
+            ctx.globalAlpha = 1;
+
+            // Draw face outline overlay only if explicitly enabled
+            const mode = OVERLAY_MODES[currentOverlayMode];
+            if (mode === 'Face Outline') {
+                ctx.globalAlpha = 0.4;
+                ctx.strokeStyle = '#888';
+                ctx.lineWidth = 2;
+                drawPath(FACE_OVAL, '#888', 2, true);
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // Draw cartoon-style eyes from mesh landmarks
+        function drawMeshCartoon(ctx, keypoints, irisColor) {
+            if (!keypoints || keypoints.length < 478) return;
+
+            const canvasW = ctx.canvas.width;
+            const canvasH = ctx.canvas.height;
+
+            // Get bounding box of both eyes to calculate scale
+            const allEyePoints = [...LEFT_EYE_CONTOUR, ...RIGHT_EYE_CONTOUR].map(i => keypoints[i]).filter(p => p);
+            if (allEyePoints.length === 0) return;
+
+            const minX = Math.min(...allEyePoints.map(p => p.x));
+            const maxX = Math.max(...allEyePoints.map(p => p.x));
+            const minY = Math.min(...allEyePoints.map(p => p.y));
+            const maxY = Math.max(...allEyePoints.map(p => p.y));
+
+            const eyesWidth = maxX - minX;
+            const eyesHeight = maxY - minY;
+            const scale = Math.min(canvasW * 0.8 / eyesWidth, canvasH * 0.6 / eyesHeight) * eyeScale;
+
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+
+            function transform(point) {
+                const x = canvasW / 2 - (point.x - centerX) * scale;
+                const y = canvasH / 2 + (point.y - centerY) * scale;
+                return { x, y };
+            }
+
+            // Helper to get smooth oval bounds from contour
+            function getEyeBounds(contourIndices) {
+                const points = contourIndices.map(i => keypoints[i]).filter(p => p);
+                if (points.length === 0) return null;
+                const xs = points.map(p => p.x);
+                const ys = points.map(p => p.y);
+                return {
+                    minX: Math.min(...xs),
+                    maxX: Math.max(...xs),
+                    minY: Math.min(...ys),
+                    maxY: Math.max(...ys),
+                    centerX: (Math.min(...xs) + Math.max(...xs)) / 2,
+                    centerY: (Math.min(...ys) + Math.max(...ys)) / 2,
+                    width: Math.max(...xs) - Math.min(...xs),
+                    height: Math.max(...ys) - Math.min(...ys)
+                };
+            }
+
+            // Helper to create clipping path from actual contour (for proper eye closing)
+            function createContourClipPath(contourIndices) {
+                const points = contourIndices.map(i => keypoints[i]).filter(p => p);
+                if (points.length < 3) return false;
+
+                ctx.beginPath();
+                const first = transform(points[0]);
+                ctx.moveTo(first.x, first.y);
+
+                for (let i = 1; i < points.length; i++) {
+                    const p = transform(points[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+                ctx.closePath();
+                return true;
+            }
+
+            // Draw cartoon eye - uses actual contour for clipping (proper eye closing)
+            function drawCartoonEye(contourIndices, irisIndices, irisColorObj) {
+                const bounds = getEyeBounds(contourIndices);
+                if (!bounds) return;
+
+                const center = transform({ x: bounds.centerX, y: bounds.centerY });
+                const w = bounds.width * scale;
+                const h = bounds.height * scale;
+
+                // Check if eye is closed (height very small compared to width)
+                const aspectRatio = bounds.height / bounds.width;
+                if (aspectRatio < 0.15) {
+                    // Draw closed eye line
+                    ctx.beginPath();
+                    ctx.moveTo(center.x - w * 0.5, center.y);
+                    ctx.lineTo(center.x + w * 0.5, center.y);
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 5;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+                    return;
+                }
+
+                // Use actual eye contour for clipping (allows proper closing)
+                ctx.save();
+                if (createContourClipPath(contourIndices)) {
+                    // White fill
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fill();
+                    ctx.clip();
+
+                    // Get iris position from landmarks
+                    const irisPoints = irisIndices.slice(0, 4).map(i => keypoints[i]).filter(p => p);
+                    if (irisPoints.length === 4) {
+                        const irisCenter = {
+                            x: irisPoints.reduce((s, p) => s + p.x, 0) / 4,
+                            y: irisPoints.reduce((s, p) => s + p.y, 0) / 4
+                        };
+                        const tc = transform(irisCenter);
+                        const irisRadius = w * 0.35;
+
+                        // Solid color iris (cartoon style)
+                        ctx.beginPath();
+                        ctx.arc(tc.x, tc.y, irisRadius, 0, Math.PI * 2);
+                        ctx.fillStyle = irisColorObj.color;
+                        ctx.fill();
+                        ctx.strokeStyle = '#000';
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+
+                        // Large pupil
+                        ctx.beginPath();
+                        ctx.arc(tc.x, tc.y, irisRadius * 0.5, 0, Math.PI * 2);
+                        ctx.fillStyle = '#000';
+                        ctx.fill();
+
+                        // Big white highlight (cartoon style)
+                        ctx.beginPath();
+                        ctx.ellipse(tc.x - irisRadius * 0.3, tc.y - irisRadius * 0.3,
+                                   irisRadius * 0.35, irisRadius * 0.3, -Math.PI/6, 0, Math.PI * 2);
+                        ctx.fillStyle = '#fff';
+                        ctx.fill();
+                    }
+                }
+                ctx.restore();
+
+                // Bold outline following actual contour
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 5;
+                createContourClipPath(contourIndices);
+                ctx.stroke();
+            }
+
+            // Draw both eyes
+            drawCartoonEye(LEFT_EYE_CONTOUR, LEFT_IRIS, irisColor);
+            drawCartoonEye(RIGHT_EYE_CONTOUR, RIGHT_IRIS, irisColor);
+
+            // Draw simple cartoon eyebrows
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+
+            function drawCartoonBrow(browIndices) {
+                const points = browIndices.map(i => keypoints[i]).filter(p => p);
+                if (points.length < 2) return;
+                ctx.beginPath();
+                const first = transform(points[0]);
+                ctx.moveTo(first.x, first.y - 15);
+                for (let i = 1; i < points.length; i++) {
+                    const p = transform(points[i]);
+                    ctx.lineTo(p.x, p.y - 15);
+                }
+                ctx.stroke();
+            }
+
+            drawCartoonBrow(LEFT_EYEBROW);
+            drawCartoonBrow(RIGHT_EYEBROW);
+        }
+
+        // Draw anime-style eyes from mesh landmarks
+        function drawMeshAnime(ctx, keypoints, irisColor) {
+            if (!keypoints || keypoints.length < 478) return;
+
+            const canvasW = ctx.canvas.width;
+            const canvasH = ctx.canvas.height;
+
+            // Get bounding box of both eyes to calculate scale
+            const allEyePoints = [...LEFT_EYE_CONTOUR, ...RIGHT_EYE_CONTOUR].map(i => keypoints[i]).filter(p => p);
+            if (allEyePoints.length === 0) return;
+
+            const minX = Math.min(...allEyePoints.map(p => p.x));
+            const maxX = Math.max(...allEyePoints.map(p => p.x));
+            const minY = Math.min(...allEyePoints.map(p => p.y));
+            const maxY = Math.max(...allEyePoints.map(p => p.y));
+
+            const eyesWidth = maxX - minX;
+            const eyesHeight = maxY - minY;
+            const scale = Math.min(canvasW * 0.8 / eyesWidth, canvasH * 0.6 / eyesHeight) * eyeScale;
+
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+
+            function transform(point) {
+                const x = canvasW / 2 - (point.x - centerX) * scale;
+                const y = canvasH / 2 + (point.y - centerY) * scale;
+                return { x, y };
+            }
+
+            // Helper to get bounds from contour
+            function getEyeBounds(contourIndices) {
+                const points = contourIndices.map(i => keypoints[i]).filter(p => p);
+                if (points.length === 0) return null;
+                const xs = points.map(p => p.x);
+                const ys = points.map(p => p.y);
+                return {
+                    centerX: (Math.min(...xs) + Math.max(...xs)) / 2,
+                    centerY: (Math.min(...ys) + Math.max(...ys)) / 2,
+                    width: Math.max(...xs) - Math.min(...xs),
+                    height: Math.max(...ys) - Math.min(...ys)
+                };
+            }
+
+            // Helper to create clipping path from actual contour (for proper eye closing)
+            function createContourClipPath(contourIndices) {
+                const points = contourIndices.map(i => keypoints[i]).filter(p => p);
+                if (points.length < 3) return false;
+
+                ctx.beginPath();
+                const first = transform(points[0]);
+                ctx.moveTo(first.x, first.y);
+
+                for (let i = 1; i < points.length; i++) {
+                    const p = transform(points[i]);
+                    ctx.lineTo(p.x, p.y);
+                }
+                ctx.closePath();
+                return true;
+            }
+
+            // Draw anime eye - uses actual contour for clipping (proper eye closing)
+            function drawAnimeEye(contourIndices, irisIndices, irisColorObj) {
+                const bounds = getEyeBounds(contourIndices);
+                if (!bounds) return;
+
+                const center = transform({ x: bounds.centerX, y: bounds.centerY });
+                const w = bounds.width * scale;
+                const h = bounds.height * scale;
+
+                // Check if eye is closed (height very small compared to width)
+                const aspectRatio = bounds.height / bounds.width;
+                if (aspectRatio < 0.15) {
+                    // Draw closed eye line (anime style - thicker)
+                    ctx.beginPath();
+                    ctx.moveTo(center.x - w * 0.55, center.y);
+                    ctx.lineTo(center.x + w * 0.55, center.y);
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 4;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+                    return;
+                }
+
+                // Use actual eye contour for clipping (allows proper closing)
+                ctx.save();
+                if (createContourClipPath(contourIndices)) {
+                    // White fill
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fill();
+                    ctx.clip();
+
+                    // Get iris position from landmarks
+                    const irisPoints = irisIndices.slice(0, 4).map(i => keypoints[i]).filter(p => p);
+                    if (irisPoints.length === 4) {
+                        const irisCenter = {
+                            x: irisPoints.reduce((s, p) => s + p.x, 0) / 4,
+                            y: irisPoints.reduce((s, p) => s + p.y, 0) / 4
+                        };
+                        const tc = transform(irisCenter);
+                        const irisRadius = w * 0.45; // Larger iris for anime
+
+                        // Gradient iris (anime style - vertical gradient)
+                        const irisGradient = ctx.createLinearGradient(tc.x, tc.y - irisRadius, tc.x, tc.y + irisRadius);
+                        irisGradient.addColorStop(0, irisColorObj.color);
+                        irisGradient.addColorStop(0.5, irisColorObj.highlight);
+                        irisGradient.addColorStop(1, irisColorObj.color);
+
+                        ctx.beginPath();
+                        ctx.arc(tc.x, tc.y, irisRadius, 0, Math.PI * 2);
+                        ctx.fillStyle = irisGradient;
+                        ctx.fill();
+
+                        // Vertical ellipse pupil (anime style)
+                        ctx.beginPath();
+                        ctx.ellipse(tc.x, tc.y, irisRadius * 0.25, irisRadius * 0.35, 0, 0, Math.PI * 2);
+                        ctx.fillStyle = '#000';
+                        ctx.fill();
+
+                        // Multiple highlights (signature anime look)
+                        ctx.fillStyle = '#fff';
+                        // Large main highlight
+                        ctx.beginPath();
+                        ctx.ellipse(tc.x - irisRadius * 0.35, tc.y - irisRadius * 0.3,
+                                   irisRadius * 0.3, irisRadius * 0.25, -Math.PI/6, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Small secondary highlight
+                        ctx.beginPath();
+                        ctx.arc(tc.x + irisRadius * 0.25, tc.y + irisRadius * 0.35, irisRadius * 0.12, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Tiny third highlight
+                        ctx.beginPath();
+                        ctx.arc(tc.x - irisRadius * 0.15, tc.y + irisRadius * 0.4, irisRadius * 0.08, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+                ctx.restore();
+
+                // Bold top eyelid line following upper contour (anime signature)
+                const upperContour = contourIndices.slice(0, 9); // First 9 points are upper lid
+                const upperPoints = upperContour.map(i => keypoints[i]).filter(p => p);
+                if (upperPoints.length > 1) {
+                    ctx.beginPath();
+                    const first = transform(upperPoints[0]);
+                    ctx.moveTo(first.x, first.y);
+                    for (let i = 1; i < upperPoints.length; i++) {
+                        const p = transform(upperPoints[i]);
+                        ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 6;
+                    ctx.stroke();
+                }
+
+                // Thinner bottom line following lower contour
+                const lowerContour = contourIndices.slice(9); // Points after 9 are lower lid
+                const lowerPoints = lowerContour.map(i => keypoints[i]).filter(p => p);
+                if (lowerPoints.length > 1) {
+                    ctx.beginPath();
+                    const first = transform(lowerPoints[0]);
+                    ctx.moveTo(first.x, first.y);
+                    for (let i = 1; i < lowerPoints.length; i++) {
+                        const p = transform(lowerPoints[i]);
+                        ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+            }
+
+            // Draw both eyes
+            drawAnimeEye(LEFT_EYE_CONTOUR, LEFT_IRIS, irisColor);
+            drawAnimeEye(RIGHT_EYE_CONTOUR, RIGHT_IRIS, irisColor);
+
+            // Draw anime-style eyebrows (thinner, more arched)
+            ctx.strokeStyle = '#3a3a3a';
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+
+            function drawAnimeBrow(browIndices) {
+                const points = browIndices.map(i => keypoints[i]).filter(p => p);
+                if (points.length < 3) return;
+                const transformed = points.map(p => transform(p));
+
+                ctx.beginPath();
+                ctx.moveTo(transformed[0].x, transformed[0].y - 20);
+                // Smooth curve through points
+                for (let i = 1; i < transformed.length - 1; i++) {
+                    const xc = (transformed[i].x + transformed[i + 1].x) / 2;
+                    const yc = (transformed[i].y + transformed[i + 1].y) / 2 - 20;
+                    ctx.quadraticCurveTo(transformed[i].x, transformed[i].y - 20, xc, yc);
+                }
+                ctx.lineTo(transformed[transformed.length - 1].x, transformed[transformed.length - 1].y - 20);
+                ctx.stroke();
+            }
+
+            drawAnimeBrow(LEFT_EYEBROW);
+            drawAnimeBrow(RIGHT_EYEBROW);
+        }
+
+        // Store transformed nose landmarks for click detection
+        let noseDotsTransformed = [];
+
+        // Build the landmark grid legend
+        function buildLandmarkGrid() {
+            const grid = document.getElementById('landmark-grid');
+            grid.innerHTML = '';
+
+            NOSE_LANDMARK_CANDIDATES.forEach(idx => {
+                const btn = document.createElement('button');
+                btn.id = `landmark-btn-${idx}`;
+                btn.className = 'text-xs px-1 py-0.5 rounded font-mono transition-colors';
+                btn.textContent = idx;
+                btn.style.minWidth = '40px';
+                updateLandmarkButton(btn, idx);
+
+                btn.addEventListener('click', () => {
+                    toggleLandmark(idx);
+                    updateLandmarkButton(btn, idx);
+                    updateSelectedCount();
+                });
+
+                grid.appendChild(btn);
+            });
+        }
+
+        // Update button appearance based on selection state
+        function updateLandmarkButton(btn, idx) {
+            const isSelected = selectedNoseLandmarks.includes(idx);
+            if (isSelected) {
+                btn.className = 'text-xs px-1 py-0.5 rounded font-mono transition-colors bg-green-600 text-white';
+            } else {
+                btn.className = 'text-xs px-1 py-0.5 rounded font-mono transition-colors bg-gray-600 text-gray-300 hover:bg-gray-500';
+            }
+        }
+
+        // Toggle landmark selection
+        function toggleLandmark(idx) {
+            const existingIdx = selectedNoseLandmarks.indexOf(idx);
+            if (existingIdx >= 0) {
+                selectedNoseLandmarks.splice(existingIdx, 1);
+                console.log(`Removed landmark ${idx}. Selected: [${selectedNoseLandmarks.join(', ')}]`);
+            } else {
+                selectedNoseLandmarks.push(idx);
+                console.log(`Added landmark ${idx}. Selected: [${selectedNoseLandmarks.join(', ')}]`);
+            }
+        }
+
+        // Update selected count display
+        function updateSelectedCount() {
+            document.getElementById('selected-count').textContent = selectedNoseLandmarks.length;
+        }
+
+        // Update all landmark buttons (for clear all, etc.)
+        function updateAllLandmarkButtons() {
+            NOSE_LANDMARK_CANDIDATES.forEach(idx => {
+                const btn = document.getElementById(`landmark-btn-${idx}`);
+                if (btn) updateLandmarkButton(btn, idx);
+            });
+            updateSelectedCount();
+        }
+
+        // Draw nose landmark dots for selection (only selected ones visible on face)
+        function drawNoseLandmarkDots(ctx, keypoints) {
+            if (!keypoints || keypoints.length < 478 || !noseSelectionMode) return;
+
+            const canvasW = ctx.canvas.width;
+            const canvasH = ctx.canvas.height;
+
+            // Get bounding box of face for proper scaling (same as Full Face)
+            const facePoints = FACE_OVAL.map(i => keypoints[i]).filter(p => p);
+            if (facePoints.length === 0) return;
+
+            const minX = Math.min(...facePoints.map(p => p.x));
+            const maxX = Math.max(...facePoints.map(p => p.x));
+            const minY = Math.min(...facePoints.map(p => p.y));
+            const maxY = Math.max(...facePoints.map(p => p.y));
+
+            const faceWidth = maxX - minX;
+            const faceHeight = maxY - minY;
+            const scale = Math.min(canvasW * 0.85 / faceWidth, canvasH * 0.85 / faceHeight) * eyeScale;
+
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+
+            function transform(point) {
+                const x = canvasW / 2 - (point.x - centerX) * scale;
+                const y = canvasH / 2 + (point.y - centerY) * scale;
+                return { x, y };
+            }
+
+            // Draw only selected landmarks on the face (small dots) if enabled
+            if (showSelectedDots) {
+                selectedNoseLandmarks.forEach(idx => {
+                    const p = keypoints[idx];
+                    if (!p) return;
+
+                    const tp = transform(p);
+
+                    // Draw small green dot
+                    ctx.beginPath();
+                    ctx.arc(tp.x, tp.y, 3, 0, Math.PI * 2);
+                    ctx.fillStyle = '#00ff00';
+                    ctx.fill();
+
+                    // Draw tiny index
+                    ctx.font = '7px monospace';
+                    ctx.fillStyle = '#fff';
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(idx.toString(), tp.x + 4, tp.y);
+                });
+            }
+
+            // Draw instruction at top
+            ctx.font = '14px sans-serif';
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.fillText('Use the grid on the right to toggle landmarks', canvasW / 2, 25);
+            ctx.fillText(`Selected: [${selectedNoseLandmarks.join(', ')}]`, canvasW / 2, 45);
+        }
+
+        // Draw debug overlay on tracking canvas
+        function drawTrackingOverlay(keypoints) {
+            // Clear canvas
+            trackingCtx.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
+
+            // Skip if overlay mode doesn't include video overlay
+            const mode = OVERLAY_MODES[currentOverlayMode];
+            if (mode === 'Face Outline' || mode === 'None') return;
+
+            // Scale factor for overlay
+            const scaleX = trackingCanvas.width / video.videoWidth;
+            const scaleY = trackingCanvas.height / video.videoHeight;
+
+            // Draw LEFT eye landmarks (MediaPipe's left = screen right in selfie view)
+            // Color: Cyan
+            // Draw LEFT eye (cyan) - corners and lid points
+            // Corners (bright cyan)
+            trackingCtx.fillStyle = '#00ffff';
+            [LEFT_EYE.outerCorner, LEFT_EYE.innerCorner].forEach((idx, i) => {
+                const p = keypoints[idx];
+                if (p) {
+                    trackingCtx.beginPath();
+                    trackingCtx.arc(p.x * scaleX, p.y * scaleY, 5, 0, Math.PI * 2);
+                    trackingCtx.fill();
+                    trackingCtx.font = '10px monospace';
+                    trackingCtx.fillText(i === 0 ? 'O' : 'I', p.x * scaleX + 6, p.y * scaleY);
+                }
+            });
+            // Upper lid (green - moves DOWN when closing)
+            trackingCtx.fillStyle = '#00ff00';
+            LEFT_EYE.upperLid.forEach((idx, i) => {
+                const p = keypoints[idx];
+                if (p) {
+                    trackingCtx.beginPath();
+                    trackingCtx.arc(p.x * scaleX, p.y * scaleY, 4, 0, Math.PI * 2);
+                    trackingCtx.fill();
+                    trackingCtx.fillText('U' + (i+1), p.x * scaleX + 5, p.y * scaleY - 5);
+                }
+            });
+            // Lower lid (red - moves UP when closing)
+            trackingCtx.fillStyle = '#ff0000';
+            LEFT_EYE.lowerLid.forEach((idx, i) => {
+                const p = keypoints[idx];
+                if (p) {
+                    trackingCtx.beginPath();
+                    trackingCtx.arc(p.x * scaleX, p.y * scaleY, 4, 0, Math.PI * 2);
+                    trackingCtx.fill();
+                    trackingCtx.fillText('L' + (i+1), p.x * scaleX + 5, p.y * scaleY + 10);
+                }
+            });
+
+            // Draw RIGHT eye (magenta) - corners and lid points
+            // Corners (bright magenta)
+            trackingCtx.fillStyle = '#ff00ff';
+            [RIGHT_EYE.outerCorner, RIGHT_EYE.innerCorner].forEach((idx, i) => {
+                const p = keypoints[idx];
+                if (p) {
+                    trackingCtx.beginPath();
+                    trackingCtx.arc(p.x * scaleX, p.y * scaleY, 5, 0, Math.PI * 2);
+                    trackingCtx.fill();
+                    trackingCtx.font = '10px monospace';
+                    trackingCtx.fillText(i === 0 ? 'O' : 'I', p.x * scaleX + 6, p.y * scaleY);
+                }
+            });
+            // Upper lid (green)
+            trackingCtx.fillStyle = '#00ff00';
+            RIGHT_EYE.upperLid.forEach((idx, i) => {
+                const p = keypoints[idx];
+                if (p) {
+                    trackingCtx.beginPath();
+                    trackingCtx.arc(p.x * scaleX, p.y * scaleY, 4, 0, Math.PI * 2);
+                    trackingCtx.fill();
+                    trackingCtx.fillText('U' + (i+1), p.x * scaleX + 5, p.y * scaleY - 5);
+                }
+            });
+            // Lower lid (red)
+            trackingCtx.fillStyle = '#ff0000';
+            RIGHT_EYE.lowerLid.forEach((idx, i) => {
+                const p = keypoints[idx];
+                if (p) {
+                    trackingCtx.beginPath();
+                    trackingCtx.arc(p.x * scaleX, p.y * scaleY, 4, 0, Math.PI * 2);
+                    trackingCtx.fill();
+                    trackingCtx.fillText('L' + (i+1), p.x * scaleX + 5, p.y * scaleY + 10);
+                }
+            });
+
+            // Draw iris centers
+            // Left iris (yellow)
+            const leftIris = keypoints[LEFT_IRIS_CENTER];
+            if (leftIris) {
+                trackingCtx.fillStyle = '#ffff00';
+                trackingCtx.beginPath();
+                trackingCtx.arc(leftIris.x * scaleX, leftIris.y * scaleY, 6, 0, Math.PI * 2);
+                trackingCtx.fill();
+                trackingCtx.fillText('L', leftIris.x * scaleX + 8, leftIris.y * scaleY);
+            }
+
+            // Right iris (orange)
+            const rightIris = keypoints[RIGHT_IRIS_CENTER];
+            if (rightIris) {
+                trackingCtx.fillStyle = '#ff8800';
+                trackingCtx.beginPath();
+                trackingCtx.arc(rightIris.x * scaleX, rightIris.y * scaleY, 6, 0, Math.PI * 2);
+                trackingCtx.fill();
+                trackingCtx.fillText('R', rightIris.x * scaleX + 8, rightIris.y * scaleY);
+            }
+        }
+
+        // ============================================
+        // CAMERA & MODEL SETUP
+        // ============================================
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: { facingMode: 'user', width: 640, height: 480 }
+                });
+                video.srcObject = stream;
+                return new Promise(resolve => {
+                    video.onloadedmetadata = () => {
+                        trackingCanvas.width = video.videoWidth;
+                        trackingCanvas.height = video.videoHeight;
+                        video.play();
+                        resolve(true);
+                    };
+                });
+            } catch (err) {
+                setStatus(`Camera error: ${err.message}`, 'error');
+                return false;
+            }
+        }
+
+        async function loadModel(retries = 0) {
+            const maxRetries = 5;
+            setStatus(`Loading model (${retries + 1}/${maxRetries})...`, 'loading');
+
+            try {
+                detector = await faceLandmarksDetection.createDetector(
+                    faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+                    {
+                        runtime: 'mediapipe',
+                        solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh',
+                        maxFaces: 1,
+                        refineLandmarks: true
+                    }
+                );
+                setStatus('Tracking active', 'active');
+                return true;
+            } catch (err) {
+                if (retries < maxRetries - 1) {
+                    await new Promise(r => setTimeout(r, 1000 * Math.pow(2, retries)));
+                    return loadModel(retries + 1);
+                }
+                setStatus('Model failed to load', 'error');
+                return false;
+            }
+        }
+
+        // ============================================
+        // MAIN RENDER LOOP
+        // ============================================
+        async function render() {
+            if (detector && video.readyState === 4) {
+                try {
+                    const faces = await detector.estimateFaces(video, { flipHorizontal: false });
+
+                    if (faces.length > 0) {
+                        const keypoints = faces[0].keypoints;
+                        lastKeypoints = keypoints; // Store for overlay drawing
+
+                        // Draw debug overlay on video
+                        drawTrackingOverlay(keypoints);
+
+                        // Calculate EAR for both eyes using NEW corrected function
+                        const leftEAR = calculateEARNew(keypoints, LEFT_EYE, 'LEFT');
+                        const rightEAR = calculateEARNew(keypoints, RIGHT_EYE, 'RIGHT');
+
+                        // Update debug display
+                        document.getElementById('left-ear').textContent = leftEAR.toFixed(2);
+                        document.getElementById('right-ear').textContent = rightEAR.toFixed(2);
+
+                        // Convert to openness and smooth
+                        const targetLeftOpen = earToOpenness(leftEAR);
+                        const targetRightOpen = earToOpenness(rightEAR);
+
+                        leftEyeOpenness = lerp(leftEyeOpenness, targetLeftOpen, SMOOTHING);
+                        rightEyeOpenness = lerp(rightEyeOpenness, targetRightOpen, SMOOTHING);
+                        // Note: All styles now use mesh-based drawing which reads
+                        // iris position directly from landmarks
+                    }
+                } catch (err) {
+                    // Detection error
+                }
+            }
+
+            // Clear and draw
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, eyesCanvas.width, eyesCanvas.height);
+
+            const style = EYE_STYLES[currentStyleIndex];
+            const color = IRIS_COLORS[currentColorIndex];
+            const lipColor = LIP_COLORS[currentLipColorIndex];
+
+            if (style === 'Mesh' && lastKeypoints) {
+                // Draw eyes from actual mesh landmarks
+                drawMeshEyes(ctx, lastKeypoints, color);
+            } else if (style === 'Full Face' && lastKeypoints) {
+                // Draw full face with eyes, nose, mouth
+                drawFullFace(ctx, lastKeypoints, color, lipColor);
+            } else if (style === 'Cartoon' && lastKeypoints) {
+                // Draw cartoon-style eyes from mesh
+                drawMeshCartoon(ctx, lastKeypoints, color);
+            } else if (style === 'Anime' && lastKeypoints) {
+                // Draw anime-style eyes from mesh
+                drawMeshAnime(ctx, lastKeypoints, color);
+            }
+
+            // Draw nose landmark dots if in selection mode
+            if (noseSelectionMode && lastKeypoints) {
+                drawNoseLandmarkDots(ctx, lastKeypoints);
+            }
+
+            // All styles now use mesh-based drawing, no separate overlay needed
+
+            animationFrameId = requestAnimationFrame(render);
+        }
+
+        // ============================================
+        // UI CONTROLS
+        // ============================================
+        document.getElementById('style-btn').addEventListener('click', () => {
+            currentStyleIndex = (currentStyleIndex + 1) % EYE_STYLES.length;
+            document.getElementById('style-label').textContent = EYE_STYLES[currentStyleIndex];
+            // Show lip color button only in Full Face mode
+            const lipBtn = document.getElementById('lip-color-btn');
+            if (EYE_STYLES[currentStyleIndex] === 'Full Face') {
+                lipBtn.classList.remove('hidden');
+                // Set default colors for Full Face: lips=Red, eyes=Green
+                currentLipColorIndex = 1;  // Red
+                currentColorIndex = 2;     // Green
+                document.getElementById('lip-color-label').textContent = LIP_COLORS[currentLipColorIndex].name;
+                document.getElementById('color-label').textContent = IRIS_COLORS[currentColorIndex].name;
+            } else {
+                lipBtn.classList.add('hidden');
+            }
+        });
+
+        document.getElementById('color-btn').addEventListener('click', () => {
+            currentColorIndex = (currentColorIndex + 1) % IRIS_COLORS.length;
+            document.getElementById('color-label').textContent = IRIS_COLORS[currentColorIndex].name;
+        });
+
+        document.getElementById('lip-color-btn').addEventListener('click', () => {
+            currentLipColorIndex = (currentLipColorIndex + 1) % LIP_COLORS.length;
+            document.getElementById('lip-color-label').textContent = LIP_COLORS[currentLipColorIndex].name;
+        });
+
+        document.getElementById('nose-select-btn').addEventListener('click', () => {
+            noseSelectionMode = !noseSelectionMode;
+            const btn = document.getElementById('nose-select-btn');
+            const legend = document.getElementById('nose-legend');
+
+            if (noseSelectionMode) {
+                btn.textContent = '✅ Exit Nose Select';
+                btn.style.background = '#16a34a';
+                legend.classList.remove('hidden');
+                buildLandmarkGrid();
+                updateSelectedCount();
+                // Switch to Full Face mode to see the nose
+                if (EYE_STYLES[currentStyleIndex] !== 'Full Face') {
+                    currentStyleIndex = EYE_STYLES.indexOf('Full Face');
+                    document.getElementById('style-label').textContent = 'Full Face';
+                    document.getElementById('lip-color-btn').classList.remove('hidden');
+                }
+            } else {
+                btn.textContent = '🔴 Select Nose';
+                btn.style.background = '';
+                legend.classList.add('hidden');
+                // Log final selection
+                console.log('=== FINAL NOSE LANDMARKS ===');
+                console.log(`Selected indices: [${selectedNoseLandmarks.join(', ')}]`);
+                console.log('Copy this array to use for nose drawing!');
+            }
+        });
+
+        // Clear all selections
+        document.getElementById('clear-selection').addEventListener('click', () => {
+            selectedNoseLandmarks = [];
+            updateAllLandmarkButtons();
+            console.log('Cleared all selections');
+        });
+
+        // Copy selection to clipboard
+        document.getElementById('copy-selection').addEventListener('click', () => {
+            const arrayStr = `[${selectedNoseLandmarks.join(', ')}]`;
+            navigator.clipboard.writeText(arrayStr).then(() => {
+                const btn = document.getElementById('copy-selection');
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.classList.remove('bg-blue-600');
+                btn.classList.add('bg-green-600');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('bg-green-600');
+                    btn.classList.add('bg-blue-600');
+                }, 1500);
+            });
+            console.log(`Copied to clipboard: ${arrayStr}`);
+        });
+
+        // Toggle dots visibility on canvas
+        document.getElementById('toggle-dots').addEventListener('click', () => {
+            showSelectedDots = !showSelectedDots;
+            const btn = document.getElementById('toggle-dots');
+            if (showSelectedDots) {
+                btn.textContent = 'Show Dots';
+                btn.classList.remove('bg-gray-600');
+                btn.classList.add('bg-purple-600');
+            } else {
+                btn.textContent = 'Hide Dots';
+                btn.classList.remove('bg-purple-600');
+                btn.classList.add('bg-gray-600');
+            }
+        });
+
+        document.getElementById('overlay-toggle').addEventListener('click', () => {
+            currentOverlayMode = (currentOverlayMode + 1) % OVERLAY_MODES.length;
+            document.getElementById('overlay-label').textContent = OVERLAY_MODES[currentOverlayMode];
+            // Clear canvases when switching modes
+            trackingCtx.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
+        });
+
+        document.getElementById('size-slider').addEventListener('input', (e) => {
+            eyeScale = parseFloat(e.target.value);
+            document.getElementById('size-label').textContent = eyeScale.toFixed(1) + 'x';
+            updateEyeGeometry();
+        });
+
+        document.getElementById('swap-btn').addEventListener('click', () => {
+            isSwapped = !isSwapped;
+            const eyesContainer = document.querySelector('.relative');  // Eyes canvas container
+            const videoContainer = document.getElementById('video-container');
+            const swapBtn = document.getElementById('swap-btn');
+
+            if (isSwapped) {
+                // Move eyes to bottom-right corner (small)
+                eyesContainer.style.position = 'fixed';
+                eyesContainer.style.bottom = '1rem';
+                eyesContainer.style.right = '1rem';
+                eyesContainer.style.width = '300px';
+                eyesContainer.style.zIndex = '100';
+                eyesCanvas.style.width = '100%';
+                eyesCanvas.style.height = 'auto';
+
+                // Move video to main area (large)
+                videoContainer.style.position = 'relative';
+                videoContainer.style.bottom = 'auto';
+                videoContainer.style.right = 'auto';
+                videoContainer.style.width = '100%';
+                videoContainer.style.maxWidth = '800px';
+                videoContainer.style.margin = '0 auto';
+                videoContainer.querySelector('div:last-child').style.height = '500px';
+
+                swapBtn.style.background = '#0891b2';
+            } else {
+                // Reset eyes to main area
+                eyesContainer.style.position = 'relative';
+                eyesContainer.style.bottom = 'auto';
+                eyesContainer.style.right = 'auto';
+                eyesContainer.style.width = 'auto';
+                eyesContainer.style.zIndex = 'auto';
+                eyesCanvas.style.width = '';
+                eyesCanvas.style.height = '';
+
+                // Reset video to corner
+                videoContainer.style.position = 'fixed';
+                videoContainer.style.bottom = '1rem';
+                videoContainer.style.right = '1rem';
+                videoContainer.style.width = '240px';
+                videoContainer.style.maxWidth = '';
+                videoContainer.style.margin = '';
+                videoContainer.querySelector('div:last-child').style.height = '180px';
+
+                swapBtn.style.background = '#374151';
+            }
+        });
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        async function init() {
+            setStatus('Starting camera...', 'loading');
+            const cameraOk = await setupCamera();
+            if (!cameraOk) return;
+
+            const modelOk = await loadModel();
+            if (!modelOk) return;
+
+            render();
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

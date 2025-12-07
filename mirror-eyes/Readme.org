@@ -1,0 +1,133 @@
+#+TITLE: Eyes Mirror
+#+DESCRIPTION: Real-time eye and face mirroring using MediaPipe FaceMesh
+
+* Overview
+
+Sync Eyes mirrors your eyes and face in real-time using webcam input and MediaPipe FaceMesh for landmark detection.
+ref: https://storage.googleapis.com/mediapipe-assets/documentation/mediapipe_face_landmark_fullsize.png
+
+* Eye Detection Logic
+
+** MediaPipe FaceMesh
+- Uses TensorFlow.js with MediaPipe FaceMesh model
+- Detects 478 facial landmarks per frame
+- Includes iris tracking with ~refineLandmarks: true~
+
+** Eye Aspect Ratio (EAR)
+Used to detect eye open/closed state:
+
+#+BEGIN_SRC
+EAR = (avg vertical distance between upper/lower lid) / (horizontal eye width)
+#+END_SRC
+
+| Threshold        | Value | Meaning      |
+|------------------+-------+--------------|
+| EAR_THRESHOLD    |  0.28 | Fully open   |
+| EAR_FULLY_CLOSED |  0.20 | Fully closed |
+
+** Eye Landmark Indices
+
+*** Left Eye
+- Outer corner: 362
+- Inner corner: 263
+- Upper lid: [386, 385, 384]
+- Lower lid: [374, 373, 380]
+- Iris center: 468
+- Iris ring: [474, 475, 476, 477]
+
+*** Right Eye
+- Outer corner: 33
+- Inner corner: 133
+- Upper lid: [159, 158, 157]
+- Lower lid: [145, 144, 153]
+- Iris center: 473
+- Iris ring: [469, 470, 471, 472]
+
+** Eye Contours (for clipping/drawing)
+
+*** Left Eye Contour
+#+BEGIN_SRC
+[362, 398, 384, 385, 386, 387, 388, 466, 263,  // Upper lid
+ 249, 390, 373, 374, 380, 381, 382, 362]       // Lower lid
+#+END_SRC
+
+*** Right Eye Contour
+#+BEGIN_SRC
+[33, 246, 161, 160, 159, 158, 157, 173, 133,   // Upper lid
+ 155, 154, 153, 145, 144, 163, 7, 33]          // Lower lid
+#+END_SRC
+
+* Face Feature Paths
+
+** Eyebrows
+
+*** Left Eyebrow
+- Upper: [276, 283, 282, 295, 285]
+- Lower: [300, 293, 334, 296, 336]
+
+*** Right Eyebrow
+- Upper: [46, 53, 52, 65, 55]
+- Lower: [70, 63, 105, 66, 107]
+
+** Nose
+
+*** Bridge (faint, alpha=0.1)
+#+BEGIN_SRC
+168 -> 6 -> 197 -> 195 -> 5 -> 4 -> 1 -> 19
+#+END_SRC
+
+*** Left Contour (alpha=0.25)
+#+BEGIN_SRC
+198 -> 131 -> 115 -> 218 -> 79 -> 238 -> 19
+#+END_SRC
+
+*** Right Contour (alpha=0.25)
+#+BEGIN_SRC
+420 -> 360 -> 344 -> 309 -> 458 -> 19
+#+END_SRC
+
+** Lips
+
+*** Outer Contour
+#+BEGIN_SRC
+[61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291,
+ 409, 270, 269, 267, 0, 37, 39, 40, 185, 61]
+#+END_SRC
+
+*** Inner Contour
+#+BEGIN_SRC
+[78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308,
+ 415, 310, 311, 312, 13, 82, 81, 80, 191, 78]
+#+END_SRC
+
+** Face Oval
+#+BEGIN_SRC
+[10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377,
+ 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10]
+#+END_SRC
+
+** Nasolabial Folds (Laugh Lines)
+Drawn dynamically when mouth opens:
+- Calculated from landmarks: 13 (upper lip), 14 (lower lip), 61 (left corner), 291 (right corner), 2 (nose base)
+- Visibility based on ~mouthOpenRatio > 0.15~
+
+* Styles
+
+| Style     | Description                          |
+|-----------+--------------------------------------|
+| Mesh      | Eyes only with landmark mesh overlay |
+| Full Face | Complete face with nose, lips, brows |
+| Cartoon   | Bold outlines, solid colors          |
+| Anime     | Large eyes, multiple highlights      |
+
+* Controls
+
+| Button       | Function                            |
+|--------------+-------------------------------------|
+| Style        | Cycle through display styles        |
+| Iris         | Change eye color                    |
+| Lips         | Change lip color (Full Face only)   |
+| Size         | Scale the display                   |
+| Overlay      | Toggle landmark/face outline        |
+| Swap         | Swap video and canvas positions     |
+| Select Nose  | Interactive nose landmark selection |
