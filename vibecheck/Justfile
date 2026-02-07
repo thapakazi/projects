@@ -1,0 +1,23 @@
+default:
+    @just --list
+
+# Install dependencies
+install:
+    bun install
+
+# Start dev server
+dev: install
+    bun run dev
+
+# Build for production
+build: install
+    bun run build
+
+# Preview production build
+preview: build
+    bun run preview
+
+# Clean node_modules and reinstall
+clean:
+    rm -rf node_modules bun.lockb dist
+    bun install

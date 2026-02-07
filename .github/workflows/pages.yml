@@ -21,6 +21,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build vibecheck
+        run: |
+          cd vibecheck
+          bun install
+          bun run build
+          # Replace source files with built output for deployment
+          rm -rf components lib *.ts *.tsx
+          cp -r dist/* .
+          rm -rf dist node_modules
+
       - name: Generate index.html
         run: bash scripts/generate-index.sh
 

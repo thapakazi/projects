@@ -1,0 +1,8 @@
+
+{
+  "name": "VibeCheck",
+  "description": "A sophisticated behavioral habit tracker and alert system using Google MediaPipe to detect and prevent hair-pulling (trichotillomania), skin picking, and nail biting.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
