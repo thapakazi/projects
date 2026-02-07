@@ -29,13 +29,23 @@ jobs:
           cd vibecheck
           bun install
           bun run build
-          # Replace source files with built output for deployment
-          rm -rf components lib *.ts *.tsx
-          cp -r dist/* .
-          rm -rf dist node_modules
+
+      - name: Assemble site
+        run: |
+          mkdir _site
+          # Copy static projects
+          for dir in */; do
+            name="${dir%/}"
+            [[ "$name" == "vibecheck" || "$name" == "scripts" || "$name" == ".github" || "$name" == "_site" ]] && continue
+            cp -r "$name" _site/
+          done
+          # Copy vibecheck build output only
+          cp -r vibecheck/dist _site/vibecheck
+          # Copy root files
+          cp -f README.md _site/ 2>/dev/null || true
 
       - name: Generate index.html
-        run: bash scripts/generate-index.sh
+        run: bash scripts/generate-index.sh _site
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -43,7 +53,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: '_site'
 
   deploy:
     environment:

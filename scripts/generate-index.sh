@@ -2,13 +2,15 @@
 # Generate index.html with tree-view listing of all projects
 # Scans directories and enriches with descriptions from README.md
 
-cd "$(dirname "$0")/.." || exit 1
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OUT_DIR="${1:-$REPO_ROOT}"
+cd "$OUT_DIR" || exit 1
 
-# Get all project directories (excluding hidden, scripts, .github)
+# Get all project directories (excluding hidden, scripts, .github, _site)
 projects=()
 for dir in */; do
     name="${dir%/}"
-    if [[ "$name" != "scripts" && "$name" != ".github" && -d "$dir" ]]; then
+    if [[ "$name" != "scripts" && "$name" != ".github" && "$name" != "_site" && -d "$dir" ]]; then
         projects+=("$name")
     fi
 done
@@ -19,8 +21,8 @@ IFS=$'\n' projects=($(sort <<<"${projects[*]}")); unset IFS
 # Function to get description for a project from README.md
 get_description() {
     local proj="$1"
-    if [[ -f "README.md" ]]; then
-        grep -E "^\- \[$proj\]" README.md | sed -E 's/^.*\) - (.+)$/\1/' | head -1
+    if [[ -f "$REPO_ROOT/README.md" ]]; then
+        grep -E "^\- \[$proj\]" "$REPO_ROOT/README.md" | sed -E 's/^.*\) - (.+)$/\1/' | head -1
     fi
 }
 
