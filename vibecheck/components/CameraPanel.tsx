@@ -69,9 +69,7 @@ const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
-            if (!videoRef.current || !canvasRef.current) return;
-            canvasRef.current.width = videoRef.current.videoWidth;
-            canvasRef.current.height = videoRef.current.videoHeight;
+            if (!videoRef.current) return;
             videoRef.current.play();
             detect();
           };
@@ -91,6 +89,26 @@ const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
         animationFrame = requestAnimationFrame(detect);
         return;
       }
+
+      // Size canvas to container so drawing coords match the displayed video
+      const container = canvas.parentElement!;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw;
+        canvas.height = ch;
+      }
+
+      // Compute object-cover transform: how normalized video coords map to canvas pixels
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const scale = Math.max(cw / vw, ch / vh);
+      const dw = vw * scale;
+      const dh = vh * scale;
+      const ox = (cw - dw) / 2;
+      const oy = (ch - dh) / 2;
+      const mapX = (nx: number) => nx * dw + ox;
+      const mapY = (ny: number) => ny * dh + oy;
 
       const startTimeMs = performance.now();
       let isDetected = false;
@@ -160,7 +178,7 @@ const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
           mCtx.putImageData(mImgData, 0, 0);
           ctx.save();
           ctx.globalAlpha = 0.7;
-          ctx.drawImage(mCanvas, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(mCanvas, ox, oy, dw, dh);
           ctx.restore();
         }
       }
@@ -169,8 +187,8 @@ const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
         targetIndices.forEach(idx => {
           const point = currentFacePoints[idx];
           if (!point) return;
-          const x = point.x * canvas.width;
-          const y = point.y * canvas.height;
+          const x = mapX(point.x);
+          const y = mapY(point.y);
           
           ctx.fillStyle = isDetected ? 'rgba(244, 63, 94, 0.8)' : 'rgba(129, 140, 248, 0.4)';
           ctx.beginPath();
@@ -192,8 +210,8 @@ const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
         handResults.landmarks.forEach((hand: any[]) => {
           [4, 8, 12].forEach(idx => {
             const tip = hand[idx];
-            const x = tip.x * canvas.width;
-            const y = tip.y * canvas.height;
+            const x = mapX(tip.x);
+            const y = mapY(tip.y);
             ctx.fillStyle = isDetected ? '#f43f5e' : '#ffffff';
             ctx.beginPath();
             ctx.arc(x, y, 7, 0, Math.PI * 2);
@@ -245,7 +263,7 @@ const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
         />
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10"
+          className="absolute inset-0 w-full h-full pointer-events-none z-10"
         />
       </div>
 

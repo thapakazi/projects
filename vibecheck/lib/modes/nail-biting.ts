@@ -1,8 +1,15 @@
 
 import { checkLandmarkProximity } from './face-common';
 
-// Indices for upper and lower lips
-export const MOUTH_LANDMARKS = [0, 11, 12, 13, 14, 15, 16, 17, 37, 38, 39, 40, 41, 42, 61, 62, 78, 80, 81, 82, 87, 88, 91, 95];
+// MediaPipe face mesh lip contour indices (outer + inner lip)
+export const MOUTH_LANDMARKS = [
+  // Outer lip
+  0, 17, 37, 39, 40, 61, 84, 91, 146, 181, 185,
+  267, 269, 270, 291, 314, 321, 375, 405, 409,
+  // Inner lip
+  13, 14, 78, 80, 81, 82, 87, 88, 95, 178, 191,
+  308, 310, 311, 312, 317, 318, 324, 402, 415,
+];
 
 export const detectNailBiting = (
   handLandmarks: any[],
