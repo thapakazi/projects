@@ -104,7 +104,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
                 const url = e.target.value;
                 updateSettings({ alertSound: url });
                 const preview = new Audio(url);
-                preview.volume = 0.5;
+                preview.volume = 1.0;
                 preview.play().catch(() => {});
                 setTimeout(() => { preview.pause(); preview.currentTime = 0; }, 2000);
               }}

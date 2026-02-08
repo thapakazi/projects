@@ -35,7 +35,7 @@ const App: React.FC = () => {
   // Initialize Audio (re-create when alertSound changes)
   useEffect(() => {
     audioRef.current = new Audio(settings.alertSound);
-    audioRef.current.volume = 0.5;
+    audioRef.current.volume = 1.0;
   }, [settings.alertSound]);
 
   // Auto-resume when pauseUntil expires
