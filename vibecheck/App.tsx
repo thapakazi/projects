@@ -15,8 +15,8 @@ const App: React.FC = () => {
     isBlurred: false,
     showDetectionPoints: true,
     zoomLevel: 1.0,
-    debounceDelay: 2000,
-    alertSound: 'https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg',
+    debounceDelay: 1000,
+    alertSound: 'https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg',
   });
 
   const [stats, setStats] = useState<DetectionStats>({
@@ -131,8 +131,18 @@ const App: React.FC = () => {
         </section>
       </main>
 
-      <footer className="p-2 text-center text-xs text-slate-500 glass">
-        VibeCheck v1.0.0 — Privacy Focused: All processing happens on your device.
+      <footer className="p-3 text-center text-xs text-slate-500 glass space-y-1">
+        <p>VibeCheck — AI-powered habit awareness that runs entirely in your browser. No data ever leaves your device.</p>
+        <p>
+          <a href="https://github.com/thapakazi/projects/tree/main/vibecheck" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 transition-colors">✨ GitHub</a>
+          <span className="mx-2">·</span>
+          <a
+            href={"https://x.com/intent/tweet?text=" + encodeURIComponent("Nose picking, nail biting, hair pulling... I got you bro!\n\n👉: https://projects.thapakazi.com/vibecheck/\nVibeCheck — AI-powered habit awareness running entirely in your browser.\n\nNo data leaves your device!! Free & Open !!\n\nmade with\n❤️:https://thapakazi.github.io/projects/vibecheck/\n#vibecare #vibechecked 🍀✌️😎")}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-400 hover:text-indigo-300 transition-colors"
+          >🔗 Share</a>
+        </p>
       </footer>
     </div>
   );

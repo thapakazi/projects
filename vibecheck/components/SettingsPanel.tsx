@@ -70,12 +70,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
 
         <div className="space-y-2">
           <div className="flex justify-between">
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Alert Debounce</label>
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Alert Me After</label>
             <span className="text-xs font-mono text-indigo-400">{(settings.debounceDelay / 1000).toFixed(1)}s</span>
           </div>
           <input
             type="range"
-            min="2000" max="3500" step="500"
+            min="500" max="3500" step="500"
             value={settings.debounceDelay}
             onChange={(e) => updateSettings({ debounceDelay: parseInt(e.target.value) })}
             className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
