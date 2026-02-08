@@ -15,6 +15,8 @@ const App: React.FC = () => {
     isBlurred: false,
     showDetectionPoints: true,
     zoomLevel: 1.0,
+    debounceDelay: 2000,
+    alertSound: 'https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg',
   });
 
   const [stats, setStats] = useState<DetectionStats>({
@@ -27,13 +29,14 @@ const App: React.FC = () => {
   const [pauseUntil, setPauseUntil] = useState<number | null>(null);
 
   const lastAlertTimeRef = useRef<number>(0);
+  const zoneEnteredAtRef = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Initialize Audio
+  // Initialize Audio (re-create when alertSound changes)
   useEffect(() => {
-    audioRef.current = new Audio('https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg');
+    audioRef.current = new Audio(settings.alertSound);
     audioRef.current.volume = 0.5;
-  }, []);
+  }, [settings.alertSound]);
 
   // Auto-resume when pauseUntil expires
   useEffect(() => {
@@ -66,9 +69,17 @@ const App: React.FC = () => {
   const handleDetection = useCallback((inZone: boolean) => {
     setStats(prev => ({ ...prev, isHandInZone: inZone }));
     if (inZone) {
-      triggerAlert();
+      const now = Date.now();
+      if (zoneEnteredAtRef.current === null) {
+        zoneEnteredAtRef.current = now;
+      }
+      if (now - zoneEnteredAtRef.current >= settings.debounceDelay) {
+        triggerAlert();
+      }
+    } else {
+      zoneEnteredAtRef.current = null;
     }
-  }, [triggerAlert]);
+  }, [triggerAlert, settings.debounceDelay]);
 
   const updateSettings = (newSettings: Partial<AppSettings>) => {
     setSettings(prev => ({ ...prev, ...newSettings }));

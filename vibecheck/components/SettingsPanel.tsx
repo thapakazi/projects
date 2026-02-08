@@ -59,11 +59,25 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
             <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Zoom Level</label>
             <span className="text-xs font-mono text-indigo-400">{settings.zoomLevel.toFixed(1)}x</span>
           </div>
-          <input 
-            type="range" 
-            min="1.0" max="3.0" step="0.1" 
+          <input
+            type="range"
+            min="1.0" max="3.0" step="0.1"
             value={settings.zoomLevel}
             onChange={(e) => updateSettings({ zoomLevel: parseFloat(e.target.value) })}
+            className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex justify-between">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Alert Debounce</label>
+            <span className="text-xs font-mono text-indigo-400">{(settings.debounceDelay / 1000).toFixed(1)}s</span>
+          </div>
+          <input
+            type="range"
+            min="2000" max="3500" step="500"
+            value={settings.debounceDelay}
+            onChange={(e) => updateSettings({ debounceDelay: parseInt(e.target.value) })}
             className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
           />
         </div>
@@ -73,13 +87,37 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       <div className="space-y-3 pt-2 border-t border-slate-800">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-slate-300">Sound Alerts</span>
-          <button 
+          <button
             onClick={() => updateSettings({ isAlertEnabled: !settings.isAlertEnabled })}
             className={`w-12 h-6 rounded-full p-1 transition-colors ${settings.isAlertEnabled ? 'bg-indigo-600' : 'bg-slate-700'}`}
           >
             <div className={`w-4 h-4 bg-white rounded-full transform transition-transform ${settings.isAlertEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
           </button>
         </div>
+
+        {settings.isAlertEnabled && (
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Alert Sound</label>
+            <select
+              value={settings.alertSound}
+              onChange={(e) => {
+                const url = e.target.value;
+                updateSettings({ alertSound: url });
+                const preview = new Audio(url);
+                preview.volume = 0.5;
+                preview.play().catch(() => {});
+                setTimeout(() => { preview.pause(); preview.currentTime = 0; }, 2000);
+              }}
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+            >
+              <option value="https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg">⏰ Digital Alarm</option>
+              <option value="https://actions.google.com/sounds/v1/human_voices/human_fart.ogg">💨 Fart</option>
+              <option value="https://actions.google.com/sounds/v1/animals/buzzing_fly.ogg">🪰 Buzzing Fly</option>
+              <option value="https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg">🎺 Bugle</option>
+              <option value="https://actions.google.com/sounds/v1/weather/distant_thunder.ogg">⛈️ Thunder</option>
+            </select>
+          </div>
+        )}
 
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-slate-300">Privacy Blur</span>

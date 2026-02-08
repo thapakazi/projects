@@ -15,6 +15,8 @@ export interface AppSettings {
   isBlurred: boolean;
   showDetectionPoints: boolean;
   zoomLevel: number;
+  debounceDelay: number; // ms, 1000–5000
+  alertSound: string; // URL for alert sound
 }
 
 export interface DetectionStats {
