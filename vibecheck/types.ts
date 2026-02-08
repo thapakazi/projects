@@ -4,7 +4,8 @@ export enum HabitMode {
   SKIN_PICKING = 'skin_picking',
   NAIL_BITING = 'nail_biting',
   NOSE_PICKING = 'nose_picking',
-  BEARD_PULLING = 'beard_pulling'
+  BEARD_PULLING = 'beard_pulling',
+  EYE_SCRATCHING = 'eye_scratching'
 }
 
 export interface AppSettings {
@@ -17,6 +18,7 @@ export interface AppSettings {
   zoomLevel: number;
   debounceDelay: number; // ms, 1000–5000
   alertSound: string; // URL for alert sound
+  autoPip: boolean; // auto PiP when tab loses focus
 }
 
 export interface DetectionStats {
