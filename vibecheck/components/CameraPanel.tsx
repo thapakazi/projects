@@ -10,12 +10,15 @@ import { detectBeardPulling, BEARD_LANDMARKS } from '../lib/modes/beard-pulling'
 interface CameraPanelProps {
   settings: AppSettings;
   onDetection: (inZone: boolean) => void;
+  isPaused: boolean;
 }
 
-const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
+const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection, isPaused }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
+  const isPausedRef = useRef(isPaused);
+  isPausedRef.current = isPaused;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,6 +89,14 @@ const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx || video.paused || video.ended) {
+        animationFrame = requestAnimationFrame(detect);
+        return;
+      }
+
+      // When paused, clear overlay and skip inference
+      if (isPausedRef.current) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        onDetection(false);
         animationFrame = requestAnimationFrame(detect);
         return;
       }
@@ -297,8 +308,8 @@ const CameraPanel: React.FC<CameraPanelProps> = ({ settings, onDetection }) => {
 
       <div className="absolute top-6 left-6 z-20">
          <div className="px-4 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-md border border-slate-700/50 text-[10px] font-bold tracking-widest uppercase flex items-center gap-2 shadow-xl">
-           <span className={`w-2 h-2 rounded-full ${loading ? 'bg-amber-500 animate-pulse' : 'bg-indigo-500'}`}></span>
-           <span className="text-slate-300">{settings.habitMode.replace('_', ' ')} ACTIVE</span>
+           <span className={`w-2 h-2 rounded-full ${loading ? 'bg-amber-500 animate-pulse' : isPaused ? 'bg-amber-500' : 'bg-indigo-500'}`}></span>
+           <span className="text-slate-300">{isPaused ? 'PAUSED' : `${settings.habitMode.replace('_', ' ')} ACTIVE`}</span>
          </div>
       </div>
     </div>

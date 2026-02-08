@@ -23,15 +23,33 @@ const App: React.FC = () => {
     isHandInZone: false,
   });
 
+  const [isPaused, setIsPaused] = useState(false);
+  const [pauseUntil, setPauseUntil] = useState<number | null>(null);
+
   const lastAlertTimeRef = useRef<number>(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Initialize Audio
   useEffect(() => {
-    // Using a high-quality kick sound URL
     audioRef.current = new Audio('https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg');
     audioRef.current.volume = 0.5;
   }, []);
+
+  // Auto-resume when pauseUntil expires
+  useEffect(() => {
+    if (!pauseUntil) return;
+    const remaining = pauseUntil - Date.now();
+    if (remaining <= 0) {
+      setIsPaused(false);
+      setPauseUntil(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setIsPaused(false);
+      setPauseUntil(null);
+    }, remaining);
+    return () => clearTimeout(timer);
+  }, [pauseUntil]);
 
   const triggerAlert = useCallback(() => {
     const now = Date.now();
@@ -56,16 +74,39 @@ const App: React.FC = () => {
     setSettings(prev => ({ ...prev, ...newSettings }));
   };
 
+  const handleTogglePause = useCallback(() => {
+    setIsPaused(p => !p);
+    setPauseUntil(null);
+  }, []);
+
+  const handleQuickPause = useCallback((ms: number) => {
+    setIsPaused(true);
+    setPauseUntil(Date.now() + ms);
+  }, []);
+
+  const handleToggleSound = useCallback(() => {
+    setSettings(prev => ({ ...prev, isAlertEnabled: !prev.isAlertEnabled }));
+  }, []);
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-950 text-slate-100">
-      <Header />
+      <Header
+        isPaused={isPaused}
+        pauseUntil={pauseUntil}
+        stats={stats}
+        settings={settings}
+        onTogglePause={handleTogglePause}
+        onQuickPause={handleQuickPause}
+        onToggleSound={handleToggleSound}
+      />
       
       <main className="flex-1 flex overflow-hidden p-4 gap-4">
         {/* Left Section: Camera View */}
         <section className="flex-[2] flex flex-col gap-4">
-          <CameraPanel 
-            settings={settings} 
+          <CameraPanel
+            settings={settings}
             onDetection={handleDetection}
+            isPaused={isPaused}
           />
         </section>
 
